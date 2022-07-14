@@ -1,0 +1,1538 @@
+---
+title: "2.bloodTransfusionPaper"
+author: "Yan Min"
+date: "8/11/2021"
+output:
+  pdf_document: default
+  html_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+setwd("~/Documents/CardioThoracicSurgeryResearch/BloodTransfusion")
+```
+
+# Load packages
+```{r}
+pkgs <- c("dplyr", "ggplot2", "tableone", "tidyr", "cowplot", "gridExtra", "grid", "data.table", "lemon", "ggExtra")
+sapply(pkgs, require, character.only = T)
+```
+
+# Load the data
+
+```{r}
+df <- read.csv("bloodTransfusionMergedSet_09222021.csv") # n = 5450
+
+df <- df[!is.na(df$prelvef),] # remove those without ejection rate
+
+# remove all the records that have na for preoperative hgb
+df <- df[!is.na(df$rfhemoglobin),] # n = 5429
+
+# remove records with NA gender
+df <- df[!is.na(df$gender),]
+
+# recode binary variable from 1, 2 convention to 0, 1 convention
+recodeVars <- c("bldprod","ibldprod", "intraopprocomcon", "imedeaca", "imedtran", "bldprod", "infendo", "chrlungd", "vdstena", "circarr", "cpvntlng", "cnstrokttia", "crendial")
+
+df <- df %>% mutate_at(recodeVars, funs(recode(., '2' = 0, '1' = 1, .default = NaN)))
+
+# correct all the opMort NAs to 0, however, this might end up underestimating. 
+df$opMort[is.na(df$opMort)] <- 0
+
+# 04/28/2022 adding additional vars to table 1
+df2 <- read.csv("STS_data_03282014_12312020.csv") # stanford data submit to STS 2014 - 2020
+df <- merge(df, df2[,c("medrecn", "perfustm")], by = "medrecn", all.x = T, all.y = F) 
+```
+
+########################################################################################################
+# Section 1. Basic demographics of the male and female patients.
+
+## Examining age and sex
+```{r}
+summary(df$age)
+summary(df$gender %>% as.factor())
+```
+
+## Create table 1 stratified by sex
+```{r}
+allVars <- names(df)
+excludeVars <- c("medrecn", "mrn", "dob", "surgdt", "dischdt", "mtdate", "gender", "patgenhist", "racecaucasian", "raceblack", "raceasian", "racenativeam", "racenativepacific", "raceother", "mt30stat", "racnativepacific", "dhcatm", "afib", "noncard", "prioraorta", "cperfutil", "cpvntlng", "cnstrokp", "cnstrokttia", "crendial")
+contiVars <- c("rfhemoglobin", "hct", "platelets", "totalbumin", "dhcatm", "postophemoglobin", "postophct", "ibdrbcu", "ibdplatu", "ibdplatu", "ibdcryou", "bdrbcu", "bdffpu", "bdcryou", "bdplatu", "age", "heightcm", "weightkg", "lwsttemp", "ibdffpu", "perfustm", "xclamptm", "totcircarrtm", "lwst_hgb", "intraclotfact", "first_postophgb", "creatlst", "egfr", "prelvef")
+catVars <- allVars[!allVars %in% c(excludeVars, contiVars)]
+
+df_table <- df[,!names(df) %in% excludeVars]
+df_table$gender <- df$gender
+df_table$gender[df_table$gender==1] <- "Male" 
+df_table$gender[df_table$gender==2] <- "Female"
+df_table$ibldprod[df_table$ibldprod == "NaN"] <- 0
+
+# Recode several variables
+recodeVars <- c("diabetes", "dyslip", "hypertn", "pvd", "thaodisease", "cvd")
+df_table <- df_table %>% mutate_at(recodeVars, funs(recode(., '1'=1, '2'=0, '3'=0, .default=NaN)))
+#df_table <- df_table %>% mutate_at("cnstrokp", funs(recode(., '1'=1, '2'=0, '3'=1, '4'=1, '5'=1, .default=NaN)))
+df_table <- df_table %>% mutate_at("vdinsufa", funs(recode(., '0'=0, '1'=1, '2'=1, '3'=1, '4'=1, '5'=0, .default=NaN)))
+
+df_table$race <- as.factor(df_table$race)
+levels(df_table$race) <- c("White", "Black", "Asian", "Native American", "Pacific Islander", "Others")
+
+df_table$classnyh <- as.factor(df_table$classnyh)
+levels(df_table$classnyh) <- c("Class I", "Class II", "Class III", "Class IV", "Not Documented")
+
+df_table$status <- as.factor(df_table$status)
+levels(df_table$status) <- c("Elective", "Urgent", "Emergent", "Emergent Salvage")
+
+df_table$transfalg <- as.factor(df_table$transfalg)
+levels(df_table$transfalg) <- c("SCA/STS Guideline", "Other Algorithms", "No Algorithm Used", NA)
+
+tableVars <- names(df_table)
+reordered_tableVars <- c("age", "gender", "race", "heightcm", "weightkg", "diabetes", "dyslip", "hypertn", "chrlungd", "infendo", "pvd", "thaodisease", "cvd", "classnyh", "prelvef", "creatlst", "egfr", "egfrCat", "vdinsufa", "vdstena", "status", "rfhemoglobin", "hct", "platelets", "totalbumin", "first_postophgb",  "lwst_hgb", "postophemoglobin", "postophct", "ibldprod", "ibdrbcu", "ibdffpu", "ibdplatu", "ibdcryou", "intraclotfact", "intraopprocomcon", "imedeaca", "imedtran", "bldprod", "bdrbcu", "bdffpu", "bdcryou", "bdplatu", "transfalg", "lwsttemp", "perfustm", "xclamptm", "circarr", "totcircarrtm",  "cabg", "valve", "aorta", "other", "opMort")
+
+contiVarIndex <- which(reordered_tableVars %in% contiVars)
+
+df_table <- df_table[, reordered_tableVars]
+
+renameVars <- c("Age", "gender", "Race", "Height(cm)", "Weight(kg)", "Diabetes", "Dyslipidemia", "Hypertension", "Chronic Lung Disease", "Endocarditis", "Peripheral Vascular Disease", "Thoracic Aortic Disease", "Cerebralvascular Disease", "NYHA Classification", "Left Ventricular Ejection Fraction", "Preoperative Creatinine", "eGFR", "Kidney Function", "Aortic Valve Insufficiency", "Aortic Stenosis", "Emergency Status", "Preoperative Hemoglobin", "Preoperative Hematocrit", "Preoperative Platelet", "Preoperative Total Albumin", "First Postop Hemoglobin", "Lowest Postoperative Hemoglobin", "Hemoglobin at Discharge", "Hematocrit at Discharge","Intraop Blood Products", "Intraop RBC Units", "Intraop FFP Units", "Intraop Platelet Units", "Intraop Cryo Units", "Intraop Clotting Factors", "Intraop Prothrombin Complex Concentrate", "Intraop Epsilon Amino-Caproic Acid", "Intraop Tranexamic Acid", "Postoperative Blood Prod", "Postoperative RBC Units", "Postoperative FFP Units", "Postoperative Cryo Units", "Postoperative Platelet Units", "Transfusion Algorithm", "Lowest Temperature", "Perfusion Time", "Cross Clamp Time (min)", "Circulatory Arrest", "Total Circulatory Arrest Time", "CABG", "Valve Surgery", "Aorta Surgery", "Other Surgery", "Operative Mortality")
+
+renameContinuvars <- renameVars[contiVarIndex]
+renameCatvars <- renameVars[!renameVars %in% c(renameContinuvars, "gender")]
+```
+
+```{r}
+setnames(df_table, old = reordered_tableVars, new = renameVars)
+```
+
+```{r}
+tab1 <- CreateTableOne(renameVars[!renameVars %in% "gender"], strata = "gender", data = df_table, factorVars = renameCatvars)
+print(tab1, smd = T, test = F, pDigits = 2, catDigits = 1, contDigits = 1)
+#write.csv(print(tab1, smd = T, test = F, pDigits = 2, catDigits = 1, contDigits = 1), file = "transfusionTables_Table1_08112021.csv", row.names = T)
+```
+
+## Add two variables
+```{r}
+tab1.1 <- CreateTableOne("perfustm", strata = "gender", data = df)
+print(tab1.1, smd = T, test = F, pDigits = 2, catDigits = 1, contDigits = 1)
+```
+
+## remove aortic cases 10/28/2021
+```{r}
+allVars <- names(df)
+excludeVars <- c("medrecn", "mrn", "dob", "surgdt", "dischdt", "mtdate", "patgenhist", "racecaucasian", "raceblack", "raceasian", "racenativeam", "racenativepacific", "raceother", "mt30stat", "racnativepacific", "dhcatm", "afib", "noncard", "prioraorta", "cperfutil", "cpvntlng", "cnstrokp", "cnstrokttia", "crendial", "opMort")
+contiVars <- c("rfhemoglobin", "hct", "platelets", "totalbumin", "dhcatm", "postophemoglobin", "postophct", "ibdrbcu", "ibdplatu", "ibdplatu", "ibdcryou", "bdrbcu", "bdffpu", "bdcryou", "bdplatu", "age", "heightcm", "weightkg", "lwsttemp", "ibdffpu", "xclamptm", "totcircarrtm", "lwst_hgb", "intraclotfact", "first_postophgb", "creatlst", "egfr", "prelvef")
+catVars <- allVars[!allVars %in% c(excludeVars, contiVars)]
+
+df_sts <- read.csv("STS_data_v2.81_v4.2_10_26.csv")
+df_ref <- read.csv("refused_blood.csv")
+
+df_table <- df[df$medrecn %in% df_sts$medrecn & (!df$medrecn %in% df_ref$medrecn), c(!names(df) %in% excludeVars)]
+df_table$gender[df_table$gender==1] <- "Male" 
+df_table$gender[df_table$gender==2] <- "Female"
+df_table$ibldprod[df_table$ibldprod == "NaN"] <- 0
+
+# Recode several variables
+recodeVars <- c("diabetes", "dyslip", "hypertn", "pvd", "thaodisease", "cvd")
+df_table <- df_table %>% mutate_at(recodeVars, funs(recode(., '1'=1, '2'=0, '3'=0, .default=NaN)))
+#df_table <- df_table %>% mutate_at("cnstrokp", funs(recode(., '1'=1, '2'=0, '3'=1, '4'=1, '5'=1, .default=NaN)))
+df_table <- df_table %>% mutate_at("vdinsufa", funs(recode(., '0'=0, '1'=1, '2'=1, '3'=1, '4'=1, '5'=0, .default=NaN)))
+
+df_table$race <- as.factor(df_table$race)
+levels(df_table$race) <- c("White", "Black", "Asian", "Native American", "Pacific Islander", "Others")
+
+df_table$classnyh <- as.factor(df_table$classnyh)
+levels(df_table$classnyh) <- c("Class I", "Class II", "Class III", "Class IV", "Not Documented")
+
+df_table$status <- as.factor(df_table$status)
+levels(df_table$status) <- c("Elective", "Urgent", "Emergent", "Emergent Salvage")
+
+df_table$transfalg <- as.factor(df_table$transfalg)
+levels(df_table$transfalg) <- c("SCA/STS Guideline", "Other Algorithms", "No Algorithm Used", NA)
+
+tableVars <- names(df_table)
+reordered_tableVars <- c("age", "gender", "race", "heightcm", "weightkg", "diabetes", "dyslip", "hypertn", "chrlungd", "infendo", "pvd", "thaodisease", "cvd", "classnyh", "prelvef", "creatlst", "egfr", "egfrCat", "vdinsufa", "vdstena", "status", "rfhemoglobin", "hct", "platelets", "totalbumin", "first_postophgb",  "lwst_hgb", "postophemoglobin", "postophct", "ibldprod", "ibdrbcu", "ibdffpu", "ibdplatu", "ibdcryou", "intraclotfact", "intraopprocomcon", "imedeaca", "imedtran", "bldprod", "bdrbcu", "bdffpu", "bdcryou", "bdplatu", "transfalg", "lwsttemp", "xclamptm", "circarr", "totcircarrtm",  "cabg", "valve", "aorta", "other")
+
+contiVarIndex <- which(reordered_tableVars %in% contiVars)
+
+df_table <- df_table[, reordered_tableVars]
+
+renameVars <- c("Age", "gender", "Race", "Height(cm)", "Weight(kg)", "Diabetes", "Dyslipidemia", "Hypertension", "Chronic Lung Disease", "Endocarditis", "Peripheral Vascular Disease", "Thoracic Aortic Disease", "Cerebralvascular Disease", "NYHA Classification", "Left Ventricular Ejection Fraction", "Preoperative Creatinine", "eGFR", "Kidney Function", "Aortic Valve Insufficiency", "Aortic Stenosis", "Emergency Status", "Preoperative Hemoglobin", "Preoperative Hematocrit", "Preoperative Platelet", "Preoperative Total Albumin", "First Postop Hemoglobin", "Lowest Postoperative Hemoglobin", "Hemoglobin at Discharge", "Hematocrit at Discharge","Intraop Blood Products", "Intraop RBC Units", "Intraop FFP Units", "Intraop Platelet Units", "Intraop Cryo Units", "Intraop Clotting Factors", "Intraop Prothrombin Complex Concentrate", "Intraop Epsilon Amino-Caproic Acid", "Intraop Tranexamic Acid", "Postoperative Blood Prod", "Postoperative RBC Units", "Postoperative FFP Units", "Postoperative Cryo Units", "Postoperative Platelet Units", "Transfusion Algorithm", "Lowest Temperature", "Cross Clamp Time (min)", "Circulatory Arrest", "Total Circulatory Arrest Time", "CABG", "Valve Surgery", "Aorta Surgery", "Other Surgery")
+
+renameContinuvars <- renameVars[contiVarIndex]
+renameCatvars <- renameVars[!renameVars %in% c(renameContinuvars, "gender")]
+
+setnames(df_table, old = reordered_tableVars, new = renameVars)
+
+tab1 <- CreateTableOne(renameVars[!renameVars %in% "gender"], strata = "gender", data = df_table, factorVars = renameCatvars)
+
+print(tab1, smd = T, test = F, pDigits = 2, catDigits = 1, contDigits = 1)
+#write.csv(print(tab1, smd = T, test = F, pDigits = 2, catDigits = 1, contDigits = 1), file = "transfusionTables_Table1_testForRemovingRecords(aortaAndRefusal_10282021.csv", row.names = T)
+```
+
+Additional information for patients whom receive either intra or post operative transfusion
+```{r}
+setnames(df_table, old = renameVars, new = reordered_tableVars)
+df_table$anyTransfusion <- ifelse(df_table$ibldprod == 1 | df_table$bldprod == 1, 1, 0)
+tab1 <- CreateTableOne("anyTransfusion", strata = "gender", data = df_table, factorVars = "anyTransfusion")
+print(tab1, smd = T, test = T)
+
+df_table$anyRBC <- ifelse((df_table$ibldprod==1&df_table$ibdrbcu!=0)|(df_table$bldprod==1&df_table$bdrbcu!=0), 1, 0)
+tab1 <- CreateTableOne("anyRBC", strata = "gender", data = df_table, factorVars = "anyRBC")
+print(tab1, smd = T, test = T)
+
+df_blood <- df_table[df_table$ibldprod==1|df_table$bldprod==1,]
+df_blood_rbc <- df_table[(df_table$ibldprod==1&df_table$ibdrbcu!=0)|(df_table$bldprod==1&df_table$bdrbcu!=0),]
+
+mean(df_blood_rbc[df_blood_rbc$gender=="Female"&df_blood_rbc$ibldprod==1&df_blood_rbc$ibdrbcu!=0,]$ibdrbcu, na.rm = T)
+mean(df_blood_rbc[df_blood_rbc$gender=="Male"&df_blood_rbc$ibldprod==1&df_blood_rbc$ibdrbcu!=0,]$ibdrbcu, na.rm = T)
+
+sd(df_blood_rbc[df_blood_rbc$gender=="Female"&df_blood_rbc$ibldprod==1&df_blood_rbc$ibdrbcu!=0,]$ibdrbcu, na.rm = T)
+sd(df_blood_rbc[df_blood_rbc$gender=="Male"&df_blood_rbc$ibldprod==1&df_blood_rbc$ibdrbcu!=0,]$ibdrbcu, na.rm = T)
+
+mean(df_blood_rbc[df_blood_rbc$gender=="Female"&df_blood_rbc$bldprod==1&df_blood_rbc$bdrbcu!=0,]$bdrbcu, na.rm = T)
+mean(df_blood_rbc[df_blood_rbc$gender=="Male"&df_blood_rbc$bldprod==1&df_blood_rbc$bdrbcu!=0,]$bdrbcu, na.rm = T)
+
+sd(df_blood_rbc[df_blood_rbc$gender=="Female"&df_blood_rbc$bldprod==1&df_blood_rbc$bdrbcu!=0,]$bdrbcu, na.rm = T)
+sd(df_blood_rbc[df_blood_rbc$gender=="Male"&df_blood_rbc$bldprod==1&df_blood_rbc$bdrbcu!=0,]$bdrbcu, na.rm = T)
+```
+
+## the number and percentages of patients receiving rbc by surgery types and time point
+```{r}
+df$intraRBC <- ifelse(df$ibldprod==1 & df$ibdrbcu>0, 1, 0) 
+df$intraRBC[is.na(df$intraRBC)] <- 0
+df$postRBC <- ifelse(df$bldprod==1&df$bdrbcu>0, 1, 0)
+
+tab1 <- CreateTableOne("intraRBC", strata = "gender", data = df, factorVars = "intraRBC")
+print(tab1, smd = T, test = T)
+
+tab1 <- CreateTableOne("intraRBC", strata = "gender", data = df[df$cabg==1,], factorVars = "intraRBC")
+print(tab1, smd = T, test = T)
+
+tab1 <- CreateTableOne("intraRBC", strata = "gender", data = df[df$valve==1,], factorVars = "intraRBC")
+print(tab1, smd = T, test = T)
+
+tab1 <- CreateTableOne("intraRBC", strata = "gender", data = df[df$aorta==1,], factorVars = "intraRBC")
+print(tab1, smd = T, test = T)
+
+--
+  
+tab1 <- CreateTableOne("postRBC", strata = "gender", data = df, factorVars = "postRBC")
+print(tab1, smd = T, test = T)
+
+tab1 <- CreateTableOne("postRBC", strata = "gender", data = df[df$cabg==1,], factorVars = "postRBC")
+print(tab1, smd = T, test = T)
+
+tab1 <- CreateTableOne("postRBC", strata = "gender", data = df[df$valve==1,], factorVars = "postRBC")
+print(tab1, smd = T, test = T)
+
+tab1 <- CreateTableOne("postRBC", strata = "gender", data = df[df$aorta==1,], factorVars = "postRBC")
+print(tab1, smd = T, test = T)
+```
+
+########################################################################################################
+# Additional section on blood units used in the population
+```{r}
+# first create a variable indicating total rbc units used
+dfrbc <- df_blood_rbc
+dfrbc$total <- dfrbc$ibdrbcu+dfrbc$bdrbcu
+
+# create a variable indicating three categories of transfusion, intra only, post only, both intra and post
+dfrbc$rbcCat <- NA
+dfrbc$rbcCat[dfrbc$ibldprod==1&dfrbc$bldprod!=1] <- 1
+dfrbc$rbcCat[dfrbc$ibldprod!=1&dfrbc$bldprod==1] <- 2
+dfrbc$rbcCat[dfrbc$ibldprod==1&dfrbc$bldprod==1] <- 3
+
+table(dfrbc$gender, dfrbc$rbcCat)
+```
+
+```{r}
+tab2 <- CreateTableOne(c("ibdrbcu", "bdrbcu"), strata = "gender", data = dfrbc)
+print(tab2, smd = T, test = T)
+```
+
+```{r}
+tab2 <- CreateTableOne(c("ibdrbcu", "bdrbcu"), strata = "gender", data = dfrbc[dfrbc$cabg==1,])
+print(tab2, smd = T, test = T)
+```
+
+```{r}
+tab2 <- CreateTableOne(c("ibdrbcu", "bdrbcu"), strata = "gender", data = dfrbc[dfrbc$valve==1,])
+print(tab2, smd = T, test = T)
+```
+
+```{r}
+tab2 <- CreateTableOne(c("ibdrbcu", "bdrbcu"), strata = "gender", data = dfrbc[dfrbc$aorta==1,])
+print(tab2, smd = T, test = T)
+```
+
+## now look into other factors after stratifying by sex
+```{r}
+dfrbc_Race <- dfrbc[dfrbc$race %in% c("White","Black"),]
+dfrbc_Race$race <- droplevels(dfrbc_Race$race)
+tab3 <- CreateTableOne(c("total"), strata = "race", data = dfrbc_Race[dfrbc_Race$gender=="Male",])
+print(tab3, smd = T, test = T)
+tab3 <- CreateTableOne(c("total"), strata = "chrlungd", data = dfrbc[ dfrbc$gender=="Male",])
+print(tab3, smd = T, test = T)
+tab3 <- CreateTableOne(c("total"), strata = "diabetes", data = dfrbc[ dfrbc$gender=="Male",])
+print(tab3, smd = T, test = T)
+tab3 <- CreateTableOne(c("total"), strata = "cvd", data = dfrbc[ dfrbc$gender=="Male",])
+print(tab3, smd = T, test = T)
+tab3 <- CreateTableOne(c("total"), strata = "pvd", data = dfrbc[ dfrbc$gender=="Male",])
+print(tab3, smd = T, test = T)
+tab3 <- CreateTableOne(c("total"), strata = "hypertn", data = dfrbc[ dfrbc$gender=="Male",])
+print(tab3, smd = T, test = T)
+```
+
+### The black male units look suspicious, plot it out.
+```{r}
+table(dfrbc_Race$race, dfrbc_Race$bdrbcu)
+table(dfrbc_Race$race, dfrbc_Race$ibdrbcu)
+table(dfrbc_Race$race, dfrbc_Race$total)
+```
+
+```{r}
+tab3 <- CreateTableOne(c("total"), strata = "race", data = dfrbc_Race[dfrbc_Race$gender=="Female",])
+print(tab3, smd = T, test = T)
+tab3 <- CreateTableOne(c("total"), strata = "chrlungd", data = dfrbc[ dfrbc$gender=="Female",])
+print(tab3, smd = T, test = T)
+tab3 <- CreateTableOne(c("total"), strata = "diabetes", data = dfrbc[ dfrbc$gender=="Female",])
+print(tab3, smd = T, test = T)
+tab3 <- CreateTableOne(c("total"), strata = "cvd", data = dfrbc[ dfrbc$gender=="Female",])
+print(tab3, smd = T, test = T)
+tab3 <- CreateTableOne(c("total"), strata = "pvd", data = dfrbc[ dfrbc$gender=="Female",])
+print(tab3, smd = T, test = T)
+tab3 <- CreateTableOne(c("total"), strata = "hypertn", data = dfrbc[ dfrbc$gender=="Female",])
+print(tab3, smd = T, test = T)
+```
+
+```{r}
+dfrbc$bdrbcu_recode <- dfrbc$bdrbcu
+dfrbc$bdrbcu_recode[dfrbc$bdrbcu > 15] <- ">15"
+dfrbc$bdrbcu_recode <- as.factor(dfrbc$bdrbcu_recode)
+dfrbc$bdrbcu_recode <- ordered(dfrbc$bdrbcu_recode, levels = c("0", "1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12", "13", "14", "15", ">15"))
+summary(dfrbc$bdrbcu_recode)
+
+dfrbc$ibdrbcu_recode <- dfrbc$ibdrbcu
+dfrbc$ibdrbcu_recode[dfrbc$ibdrbcu > 15] <- ">15"
+dfrbc$ibdrbcu_recode <- as.factor(dfrbc$ibdrbcu_recode)
+dfrbc$ibdrbcu_recode <- ordered(dfrbc$ibdrbcu_recode, levels = c("0", "1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12", "13", "14", "15", ">15"))
+summary(dfrbc$ibdrbcu_recode)
+```
+
+########################################################################################################
+# Section 2. Pre and postoperative HGB level comparison between men and women. 
+
+## Summarize the HGB statistics in men and women
+```{r}
+# Preoperative hgb
+summary(df[df$gender == 1,]$rfhemoglobin)
+summary(df[df$gender == 2,]$rfhemoglobin)
+
+# Postoperative hgb
+summary(df[df$gender == 1,]$postophemoglobin)
+summary(df[df$gender == 2,]$postophemoglobin)
+```
+
+## Plot out the pre and postoperative hemoglobin levels by sex
+```{r}
+ggplot(df, aes(x = rfhemoglobin, color = as.factor(gender), fill = as.factor(gender))) + geom_histogram(binwidth = .2, color = "#e9ecef", alpha = 0.7, position = "dodge") + scale_fill_manual(values = c("#69b3a2", "#404080"), name = "Sex", labels = c("Male", "Female")) + scale_color_manual(values = c("#69b3a2", "#404080"), name = "Sex", labels = c("Male", "Female")) + geom_density(aes(y = ..count../5),alpha = 0.1) + guides(color = FALSE) + geom_vline(xintercept = median(df[df$gender == 1,]$rfhemoglobin, na.rm = T), linetype = "dashed", color = "#69b3a2") + geom_vline(xintercept = median(df[df$gender == 2,]$rfhemoglobin, na.rm = T), linetype = "dashed", color = "#404080") + ggtitle("Preoperative HGB Distribution in All Surgeries") + theme_classic() + xlim(5, 20) + geom_density(alpha = 0.1) + guides(color = FALSE) + xlab("Baseline HGB (g/dl)")
+
+ggsave(filename = "bloodTrasfusion_Figure1_preOpHGBDist_allopsStanford.jpeg", device='tiff', dpi=700)
+
+all_pre <- ggplot(df, aes(x = rfhemoglobin, color = as.factor(gender), fill = as.factor(gender))) + geom_histogram(binwidth = .2, color = "#e9ecef", alpha = 0.7, position = "dodge") + scale_fill_manual(values = c("#69b3a2", "#404080"), name = "Sex", labels = c("Male", "Female")) + scale_color_manual(values = c("#69b3a2", "#404080"), name = "Sex", labels = c("Male", "Female")) + geom_density(aes(y = ..count../5),alpha = 0.1) + guides(color = FALSE) + geom_vline(xintercept = median(df[df$gender == 1,]$rfhemoglobin, na.rm = T), linetype = "dashed", color = "#69b3a2") + geom_vline(xintercept = median(df[df$gender == 2,]$rfhemoglobin, na.rm = T), linetype = "dashed", color = "#404080") + ggtitle("Preoperative HGB Distribution in All Surgeries") + theme_classic() + xlim(5, 20) + geom_density(alpha = 0.1) + guides(color = FALSE) + xlab("Baseline HGB (g/dl)")
+```
+
+```{r}
+ggplot(df, aes(x = postophemoglobin, color = as.factor(gender), fill = as.factor(gender))) + geom_histogram(binwidth = .2, color = "#e9ecef", alpha = 0.7, position = "dodge") + scale_fill_manual(values = c("#69b3a2", "#404080"), name = "Sex", labels = c("Male", "Female")) + scale_color_manual(values = c("#69b3a2", "#404080"), name = "Sex", labels = c("Male", "Female")) + geom_density(aes(y = ..count../5),alpha = 0.1) + guides(color = FALSE) + geom_vline(xintercept = median(df[df$gender == 1,]$postophemoglobin, na.rm = T), linetype = "dashed", color = "#69b3a2") + geom_vline(xintercept = median(df[df$gender == 2,]$postophemoglobin, na.rm = T), linetype = "dashed", color = "#404080") + ggtitle("Discharge HGB Distribution in All Surgeries") + theme_classic() + xlim(5, 20) + xlab("Pre-Discharge HGB (g/dl)")
+
+ggsave(filename = "bloodTrasfusion_Figure1_postOpHGBDist_allopsStanford.jpeg", device='tiff', dpi=700)
+
+all_post <- ggplot(df, aes(x = postophemoglobin, color = as.factor(gender), fill = as.factor(gender))) + geom_histogram(binwidth = .2, color = "#e9ecef", alpha = 0.7, position = "dodge") + scale_fill_manual(values = c("#69b3a2", "#404080"), name = "Sex", labels = c("Male", "Female")) + scale_color_manual(values = c("#69b3a2", "#404080"), name = "Sex", labels = c("Male", "Female")) + geom_density(aes(y = ..count../5),alpha = 0.1) + guides(color = FALSE) + geom_vline(xintercept = median(df[df$gender == 1,]$postophemoglobin, na.rm = T), linetype = "dashed", color = "#69b3a2") + geom_vline(xintercept = median(df[df$gender == 2,]$postophemoglobin, na.rm = T), linetype = "dashed", color = "#404080") + ggtitle("Discharge HGB Distribution in All Surgeries") + theme_classic() + xlim(5, 20) + xlab("Pre-Discharge HGB (g/dl)")
+```
+
+```{r}
+g_all <- grid_arrange_shared_legend(all_pre, all_post ,  ncol = 1, nrow = 2, position = "right") 
+```
+
+## T-tests on the pre and postoperative hgb between two sex
+```{r}
+t.test(df[df$gender==1,]$rfhemoglobin, df[df$gender==2,]$rfhemoglobin)
+t.test(df[df$gender==1,]$postophemoglobin, df[df$gender==2,]$postophemoglobin)
+```
+
+## Note both tests give significant results, however, the postoperative hgb difference is not likely to be clinically significant. 
+
+## Repeat the above procedure in different surgery types - aorta 
+```{r}
+# Preoperative hgb
+summary(df[df$gender == 1&df$aorta == 1,]$rfhemoglobin)
+summary(df[df$gender == 2&df$aorta == 1,]$rfhemoglobin)
+
+# Postoperative hgb
+summary(df[df$gender == 1&df$aorta == 1,]$postophemoglobin)
+summary(df[df$gender == 2&df$aorta == 1,]$postophemoglobin)
+```
+
+```{r}
+ggplot(df[df$aorta==1,], aes(x = rfhemoglobin, color = as.factor(gender), fill = as.factor(gender))) + geom_histogram(binwidth = .2, color = "#e9ecef", alpha = 0.7, position = "dodge") + scale_fill_manual(values = c("#69b3a2", "#404080"), name = "Sex", labels = c("Male", "Female")) + scale_color_manual(values = c("#69b3a2", "#404080"), name = "Sex", labels = c("Male", "Female")) + geom_density(aes(y = ..count../5),alpha = 0.1) + guides(color = FALSE) + geom_vline(xintercept = median(df[df$gender == 1&df$aorta==1,]$rfhemoglobin, na.rm = T), linetype = "dashed", color = "#69b3a2") + geom_vline(xintercept = median(df[df$gender == 2&df$aorta==1,]$rfhemoglobin, na.rm = T), linetype = "dashed", color = "#404080") + ggtitle("Preoperative HGB Distribution in Aorta Surgeries") + theme_classic() + xlim(5, 20) + xlab("Baseline HGB (g/dl)")
+
+ggsave(filename = "bloodTrasfusion_Figure1_preOpHGBDist_aortaStanford.jpeg", device='tiff', dpi=700)
+
+aorta_pre <- ggplot(df[df$aorta==1,], aes(x = rfhemoglobin, color = as.factor(gender), fill = as.factor(gender))) + geom_histogram(binwidth = .2, color = "#e9ecef", alpha = 0.7, position = "dodge") + scale_fill_manual(values = c("#69b3a2", "#404080"), name = "Sex", labels = c("Male", "Female")) + scale_color_manual(values = c("#69b3a2", "#404080"), name = "Sex", labels = c("Male", "Female")) + geom_density(aes(y = ..count../5),alpha = 0.1) + guides(color = FALSE) + geom_vline(xintercept = median(df[df$gender == 1&df$aorta==1,]$rfhemoglobin, na.rm = T), linetype = "dashed", color = "#69b3a2") + geom_vline(xintercept = median(df[df$gender == 2&df$aorta==1,]$rfhemoglobin, na.rm = T), linetype = "dashed", color = "#404080") + ggtitle("Preoperative HGB Distribution in Aorta Surgeries") + theme_classic() + xlim(5, 20) + xlab("Baseline HGB (g/dl)")
+```
+
+```{r}
+ggplot(df[df$aorta == 1,], aes(x = postophemoglobin, color = as.factor(gender), fill = as.factor(gender))) + geom_histogram(binwidth = .2, color = "#e9ecef", alpha = 0.7, position = "dodge") + scale_fill_manual(values = c("#69b3a2", "#404080"), name = "Sex", labels = c("Male", "Female")) + scale_color_manual(values = c("#69b3a2", "#404080"), name = "Sex", labels = c("Male", "Female")) + geom_density(aes(y = ..count../5),alpha = 0.1) + guides(color = FALSE) + geom_vline(xintercept = median(df[df$gender == 1&df$aorta==1,]$postophemoglobin, na.rm = T), linetype = "dashed", color = "#69b3a2") + geom_vline(xintercept = median(df[df$gender == 2&df$aorta==1,]$postophemoglobin, na.rm = T), linetype = "dashed", color = "#404080") + ggtitle("Discharge HGB Distribution in Aorta Surgeries") + theme_classic() + xlim(5, 20) + xlab("Pre-Discharge HGB (g/dl)")
+ 
+ggsave(filename = "bloodTrasfusion_Figure1_postOpHGBDist_aortaStanford.jpeg", device='tiff', dpi=700)
+
+aorta_post <- ggplot(df[df$aorta == 1,], aes(x = postophemoglobin, color = as.factor(gender), fill = as.factor(gender))) + geom_histogram(binwidth = .2, color = "#e9ecef", alpha = 0.7, position = "dodge") + scale_fill_manual(values = c("#69b3a2", "#404080"), name = "Sex", labels = c("Male", "Female")) + scale_color_manual(values = c("#69b3a2", "#404080"), name = "Sex", labels = c("Male", "Female")) + geom_density(aes(y = ..count../5),alpha = 0.1) + guides(color = FALSE) + geom_vline(xintercept = median(df[df$gender == 1&df$aorta==1,]$postophemoglobin, na.rm = T), linetype = "dashed", color = "#69b3a2") + geom_vline(xintercept = median(df[df$gender == 2&df$aorta==1,]$postophemoglobin, na.rm = T), linetype = "dashed", color = "#404080") + ggtitle("Discharge HGB Distribution in Aorta Surgeries") + theme_classic() + xlim(5, 20) + xlab("Pre-Discharge HGB (g/dl)")
+```
+
+```{r}
+g_aorta <- grid_arrange_shared_legend(aorta_pre, aorta_post, ncol = 1, nrow = 2, position = "right")
+```
+
+```{r}
+t.test(df[df$gender==1&df$aorta == 1,]$rfhemoglobin, df[df$gender==2&df$aorta == 1,]$rfhemoglobin)
+t.test(df[df$gender==1&df$aorta == 1,]$postophemoglobin, df[df$gender==2&df$aorta == 1,]$postophemoglobin)
+```
+
+## Repeat the above procedure in different surgery types - valve
+```{r}
+# Preoperative hgb
+summary(df[df$gender == 1&df$valve == 1,]$rfhemoglobin)
+summary(df[df$gender == 2&df$valve == 1,]$rfhemoglobin)
+
+# Postoperative hgb
+summary(df[df$gender == 1&df$valve == 1,]$postophemoglobin)
+summary(df[df$gender == 2&df$valve == 1,]$postophemoglobin)
+```
+
+```{r}
+ggplot(df[df$valve==1,], aes(x = rfhemoglobin, color = as.factor(gender), fill = as.factor(gender))) + geom_histogram(binwidth = .2, color = "#e9ecef", alpha = 0.7, position = "dodge") + scale_fill_manual(values = c("#69b3a2", "#404080"), name = "Sex", labels = c("Male", "Female")) + scale_color_manual(values = c("#69b3a2", "#404080"), name = "Sex", labels = c("Male", "Female")) + geom_density(aes(y = ..count../5),alpha = 0.1) + guides(color = FALSE) + geom_vline(xintercept = median(df[df$gender == 1&df$valve==1,]$rfhemoglobin, na.rm = T), linetype = "dashed", color = "#69b3a2") + geom_vline(xintercept = median(df[df$gender == 2&df$valve==1,]$rfhemoglobin, na.rm = T), linetype = "dashed", color = "#404080") + ggtitle("Preoperative HGB Distribution in Valve Surgeries") + theme_classic() + xlim(5, 20) + xlab("Baseline HGB (g/dl)")
+
+ggsave(filename = "bloodTrasfusion_Figure1_preOpHGBDist_valveStanford.jpeg", device='tiff', dpi=700)
+
+valve_pre <- ggplot(df[df$valve==1,], aes(x = rfhemoglobin, color = as.factor(gender), fill = as.factor(gender))) + geom_histogram(binwidth = .2, color = "#e9ecef", alpha = 0.7, position = "dodge") + scale_fill_manual(values = c("#69b3a2", "#404080"), name = "Sex", labels = c("Male", "Female")) + scale_color_manual(values = c("#69b3a2", "#404080"), name = "Sex", labels = c("Male", "Female")) + geom_density(aes(y = ..count../5),alpha = 0.1) + guides(color = FALSE) + geom_vline(xintercept = median(df[df$gender == 1&df$valve==1,]$rfhemoglobin, na.rm = T), linetype = "dashed", color = "#69b3a2") + geom_vline(xintercept = median(df[df$gender == 2&df$valve==1,]$rfhemoglobin, na.rm = T), linetype = "dashed", color = "#404080") + ggtitle("Preoperative HGB Distribution in Valve Surgeries") + theme_classic() + xlim(5, 20) + xlab("Baseline HGB (g/dl)")
+```
+
+```{r}
+ggplot(df[df$valve == 1,], aes(x = postophemoglobin, color = as.factor(gender), fill = as.factor(gender))) + geom_histogram(binwidth = .2, color = "#e9ecef", alpha = 0.7, position = "dodge") + scale_fill_manual(values = c("#69b3a2", "#404080"), name = "Sex", labels = c("Male", "Female")) + scale_color_manual(values = c("#69b3a2", "#404080"), name = "Sex", labels = c("Male", "Female")) + geom_density(aes(y = ..count../5),alpha = 0.1) + guides(color = FALSE) + geom_vline(xintercept = median(df[df$gender == 1&df$valve==1,]$postophemoglobin, na.rm = T), linetype = "dashed", color = "#69b3a2") + geom_vline(xintercept = median(df[df$gender == 2&df$valve==1,]$postophemoglobin, na.rm = T), linetype = "dashed", color = "#404080") + ggtitle("Discharge HGB Distribution in Valve Surgeries") + theme_classic() + xlim(5, 20) + xlab("Pre-Discharge HGB (g/dl)")
+
+ggsave(filename = "bloodTrasfusion_Figure1_postOpHGBDist_valveStanford.jpeg", device='tiff', dpi=700)
+
+valve_post <- ggplot(df[df$valve == 1,], aes(x = postophemoglobin, color = as.factor(gender), fill = as.factor(gender))) + geom_histogram(binwidth = .2, color = "#e9ecef", alpha = 0.7, position = "dodge") + scale_fill_manual(values = c("#69b3a2", "#404080"), name = "Sex", labels = c("Male", "Female")) + scale_color_manual(values = c("#69b3a2", "#404080"), name = "Sex", labels = c("Male", "Female")) + geom_density(aes(y = ..count../5),alpha = 0.1) + guides(color = FALSE) + geom_vline(xintercept = median(df[df$gender == 1&df$valve==1,]$postophemoglobin, na.rm = T), linetype = "dashed", color = "#69b3a2") + geom_vline(xintercept = median(df[df$gender == 2&df$valve==1,]$postophemoglobin, na.rm = T), linetype = "dashed", color = "#404080") + ggtitle("Discharge HGB Distribution in Valve Surgeries") + theme_classic() + xlim(5, 20) + xlab("Pre-Discharge HGB (g/dl)")
+```
+
+```{r}
+g_valve <- grid_arrange_shared_legend(valve_pre, valve_post, ncol = 1, nrow = 2, position = "right")
+```
+
+```{r}
+t.test(df[df$gender==1&df$valve == 1,]$rfhemoglobin, df[df$gender==2&df$valve == 1,]$rfhemoglobin)
+t.test(df[df$gender==1&df$valve == 1,]$postophemoglobin, df[df$gender==2&df$valve == 1,]$postophemoglobin)
+```
+
+## Repeat the above procedure in different surgery types - cabg 
+```{r}
+# Preoperative hgb
+summary(df[df$gender == 1&df$cabg == 1,]$rfhemoglobin)
+summary(df[df$gender == 2&df$cabg == 1,]$rfhemoglobin)
+
+# Postoperative hgb
+summary(df[df$gender == 1&df$cabg == 1,]$postophemoglobin)
+summary(df[df$gender == 2&df$cabg == 1,]$postophemoglobin)
+```
+
+```{r}
+ggplot(df[df$cabg==1,], aes(x = rfhemoglobin, color = as.factor(gender), fill = as.factor(gender))) + geom_histogram(binwidth = .2, color = "#e9ecef", alpha = 0.7, position = "dodge") + scale_fill_manual(values = c("#69b3a2", "#404080"), name = "Sex", labels = c("Male", "Female")) + scale_color_manual(values = c("#69b3a2", "#404080"), name = "Sex", labels = c("Male", "Female")) + geom_density(aes(y = ..count../5),alpha = 0.1) + guides(color = FALSE) + geom_vline(xintercept = median(df[df$gender == 1&df$cabg==1,]$rfhemoglobin, na.rm = T), linetype = "dashed", color = "#69b3a2") + geom_vline(xintercept = median(df[df$gender == 2&df$cabg==1,]$rfhemoglobin, na.rm = T), linetype = "dashed", color = "#404080") + ggtitle("Preoperative HGB Distribution in CABG") + theme_classic() + xlim(5, 20)+ xlab("Baseline HGB (g/dl)")
+
+ggsave(filename = "bloodTrasfusion_Figure1_preOpHGBDist_cabgStanford.jpeg", device='tiff', dpi=700)
+
+cabg_pre <- ggplot(df[df$cabg==1,], aes(x = rfhemoglobin, color = as.factor(gender), fill = as.factor(gender))) + geom_histogram(binwidth = .2, color = "#e9ecef", alpha = 0.7, position = "dodge") + scale_fill_manual(values = c("#69b3a2", "#404080"), name = "Sex", labels = c("Male", "Female")) + scale_color_manual(values = c("#69b3a2", "#404080"), name = "Sex", labels = c("Male", "Female")) + geom_density(aes(y = ..count../5),alpha = 0.1) + guides(color = FALSE) + geom_vline(xintercept = median(df[df$gender == 1&df$cabg==1,]$rfhemoglobin, na.rm = T), linetype = "dashed", color = "#69b3a2") + geom_vline(xintercept = median(df[df$gender == 2&df$cabg==1,]$rfhemoglobin, na.rm = T), linetype = "dashed", color = "#404080") + ggtitle("Preoperative HGB Distribution in CABG") + theme_classic() + xlim(5, 20)+ xlab("Baseline HGB (g/dl)")s
+```
+
+```{r}
+ggplot(df[df$cabg == 1,], aes(x = postophemoglobin, color = as.factor(gender), fill = as.factor(gender))) + geom_histogram(binwidth = .2, color = "#e9ecef", alpha = 0.7, position = "dodge") + scale_fill_manual(values = c("#69b3a2", "#404080"), name = "Sex", labels = c("Male", "Female")) + scale_color_manual(values = c("#69b3a2", "#404080"), name = "Sex", labels = c("Male", "Female")) + geom_density(aes(y = ..count../5),alpha = 0.1) + guides(color = FALSE) + geom_vline(xintercept = median(df[df$gender == 1&df$cabg==1,]$postophemoglobin, na.rm = T), linetype = "dashed", color = "#69b3a2") + geom_vline(xintercept = median(df[df$gender == 2&df$cabg==1,]$postophemoglobin, na.rm = T), linetype = "dashed", color = "#404080") + ggtitle("Discharge HGB Distribution in CABG Surgeries") + theme_classic() + xlim(5, 20) + xlab("Pre-Discharge HGB (g/dl)")
+
+ggsave(filename = "bloodTrasfusion_Figure1_postOpHGBDist_cabgStanford.jpeg", device='tiff', dpi=700)
+
+cabg_post <- ggplot(df[df$cabg == 1,], aes(x = postophemoglobin, color = as.factor(gender), fill = as.factor(gender))) + geom_histogram(binwidth = .2, color = "#e9ecef", alpha = 0.7, position = "dodge") + scale_fill_manual(values = c("#69b3a2", "#404080"), name = "Sex", labels = c("Male", "Female")) + scale_color_manual(values = c("#69b3a2", "#404080"), name = "Sex", labels = c("Male", "Female")) + geom_density(aes(y = ..count../5),alpha = 0.1) + guides(color = FALSE) + geom_vline(xintercept = median(df[df$gender == 1&df$cabg==1,]$postophemoglobin, na.rm = T), linetype = "dashed", color = "#69b3a2") + geom_vline(xintercept = median(df[df$gender == 2&df$cabg==1,]$postophemoglobin, na.rm = T), linetype = "dashed", color = "#404080") + ggtitle("Discharge HGB Distribution in CABG Surgeries") + theme_classic() + xlim(5, 20) + xlab("Pre-Discharge HGB (g/dl)")
+```
+
+```{r}
+g_cabg <- grid_arrange_shared_legend(cabg_pre, cabg_post, ncol = 1, nrow = 2, position = "right")
+```
+
+```{r}
+t.test(df[df$gender==1&df$cabg == 1,]$rfhemoglobin, df[df$gender==2&df$cabg == 1,]$rfhemoglobin)
+t.test(df[df$gender==1&df$cabg == 1,]$postophemoglobin, df[df$gender==2&df$cabg == 1,]$postophemoglobin)
+```
+
+## Reflect, by stratifying three procedures: aorta surgery, valve surgery, and isolated CABG, we observed that aorta surgery has the most drastic distibution shift, then valve surgery, and CABG has the least drastic distribution shift. This is likely due to the difference in the need of transfusion across these three surgical categories. Aortic surgeries will have the highest needs, then valve, and cabg. [add some reference here] Also this point may be empiracally proved by the following section - examining the transfusion protocol. 
+
+## Now put all the histograms together
+```{r}
+plot_grid(g_all, g_cabg, g_valve, g_aorta, labels = c("B", "C", "D", "E"), ncol = 2) 
+surg_grid <- plot_grid(g_all, g_cabg, g_valve, g_aorta, labels = c("B", "C", "D", "E"), ncol = 2) 
+```
+
+## A small divergence to explore the distribution among those have received blood transfusion, what their hgb distribution look like.
+```{r}
+ggplot(df[df$ibldprod!=0&df$bldprod!=0,], aes(x = rfhemoglobin, fill = as.factor(gender))) + geom_histogram(binwidth = .3, color = "#e9ecef", alpha = 0.7, position = "dodge") + scale_fill_manual(values = c("#69b3a2", "#404080"), name = "Sex", labels = c("Male", "Female")) + ggtitle("Pre-operation HGB Distribution in CABG, Valve, and Arch") + theme_classic()
+
+ggsave(filename = "bloodTrasfusion_Figure1_preOpHGBDist_allopsStanford_transfusedPatients.jpeg", device='tiff', dpi=700)
+```
+
+```{r}
+ggplot(df[df$ibldprod!=0&df$bldprod!=0,], aes(x = postophemoglobin, fill = as.factor(gender))) + geom_histogram(binwidth = .2, color = "#e9ecef", alpha = 0.7, position = "dodge") + scale_fill_manual(values = c("#69b3a2", "#404080"), name = "Sex", labels = c("Male", "Female")) + ggtitle("Postoperation HGB Distribution in CABG, Valve, and Arch") + theme_classic()
+
+ggsave(filename = "bloodTrasfusion_Figure1_postOpHGBDist_allopsStanford_transfusedPatients.jpeg", device='tiff', dpi=700)
+```
+
+## T-tests on the pre and postoperative hgb between two sex among the transfused patients only.
+```{r}
+# Note both tests give significant results, however, the postoperative hgb difference is not likely to be clinically significant.
+t.test(df[df$gender==1&(df$ibldprod!=0&df$bldprod!=0),]$rfhemoglobin, df[df$gender==2&(df$ibldprod!=0&df$bldprod!=0),]$rfhemoglobin)
+t.test(df[df$gender==1&(df$ibldprod!=0&df$bldprod!=0),]$postophemoglobin, df[df$gender==2&(df$ibldprod!=0&df$bldprod!=0),]$postophemoglobin)
+```
+
+## The preoperative hgb levels are statistically different between men and women who have received blood transfusion (either intra/post operatively or both). Here since the difference is bigger than 1, we consider it is also clinically significant. Whereas 
+
+########################################################################################################
+# Section 3. The blood transfusion patterns (Overall, by procedure)
+
+## Blood transfusion patterns in all surgeries 
+```{r}
+table(df$ibldprod, df$bldprod, df$gender) 
+table(df[df$gender == 1,]$ibldprod, df[df$gender == 1,]$bldprod) %>% prop.table() 
+table(df[df$gender == 2,]$ibldprod, df[df$gender == 2,]$bldprod) %>% prop.table() 
+```
+
+## Blood transfusion patterns in valve surgeries 
+```{r}
+table(df[df$valve == 1,]$ibldprod, df[df$valve == 1,]$bldprod, df[df$valve == 1,]$gender)
+table(df[df$gender == 1&df$valve == 1,]$ibldprod, df[df$gender == 1&df$valve == 1,]$bldprod) %>% prop.table() 
+table(df[df$gender == 2&df$valve == 1,]$ibldprod, df[df$gender == 2&df$valve == 1,]$bldprod) %>% prop.table() 
+```
+
+## Blood transfusion patterns in aorta surgeries 
+```{r}
+table(df[df$aorta == 1,]$ibldprod, df[df$aorta == 1,]$bldprod, df[df$aorta == 1,]$gender)
+table(df[df$gender == 1&df$aorta == 1,]$ibldprod, df[df$gender == 1&df$aorta == 1,]$bldprod) %>% prop.table() 
+table(df[df$gender == 2&df$aorta == 1,]$ibldprod, df[df$gender == 2&df$aorta == 1,]$bldprod) %>% prop.table() 
+```
+
+## Blood transfusion patterns in isolated CABG 
+```{r}
+table(df[df$cabg == 1&df$valve==0&df$aorta==0&df$other==0,]$ibldprod, df[df$cabg == 1&df$valve==0&df$aorta==0&df$other==0,]$bldprod, df[df$cabg == 1&df$valve==0&df$aorta==0&df$other==0,]$gender)
+table(df[df$gender == 1&df$cabg == 1&df$valve==0&df$aorta==0&df$other==0,]$ibldprod, df[df$gender == 1&df$cabg == 1&df$valve==0&df$aorta==0&df$other==0,]$bldprod) %>% prop.table() 
+table(df[df$gender == 2&df$cabg == 1&df$valve==0&df$aorta==0&df$other==0,]$ibldprod, df[df$gender == 2&df$cabg == 1&df$valve==0&df$aorta==0&df$other==0,]$bldprod) %>% prop.table() 
+```
+
+########################################################################################################
+# Section 3. Blood transfusion decision making.
+
+```{r}
+df <- df[!is.na(df$bldprod)&!is.na(df$lwst_hgb),]
+```
+
+## Fit a logistic model to predict the probability of receiving blood transfusion post operatively in all surgeries. 
+```{r}
+fit_all_m <- glm(bldprod ~ lwst_hgb, family = binomial, data = df[df$gender == 1,])
+fit_all_f <- glm(bldprod ~ lwst_hgb, family = binomial, data = df[df$gender == 2,])
+
+# Obtain fitted values for male and female patients separately
+df_m <- df[df$gender==1,]
+df_f <- df[df$gender==2,]
+
+df_m$fittedAll_prob_m <- fit_all_m$fitted.values
+df_m$all_sigmoid_m <- df_m$fittedAll_prob_m/(1-df_m$fittedAll_prob_m)
+
+df_f$fittedAll_prob_f <- fit_all_f$fitted.values
+df_f$all_sigmoid_f <- df_f$fittedAll_prob_f/(1-df_f$fittedAll_prob_f)
+```
+
+## Construct the decision curve for all procedures
+```{r}
+md <- ggplot(df_m, aes(x = lwst_hgb, y = fittedAll_prob_m)) + geom_point(alpha = 0.7, color = "#69b3a2") + theme_classic() + xlab("Lowest Post-operative HGB") + ylab("Probability of Receiving Blood Products") + ggtitle("Transfusion Trend in Male Patients") + xlim(4, 12.5) 
+
+md <- ggMarginal(md, type = "boxplot", margins = "x", color = "#69b3a2")
+
+ggsave(filename = "allMaleDecision_hgb.jpeg", device='tiff', dpi=700)
+```
+
+```{r}
+IQR(df_m$lwst_hgb)
+summary(df_m$lwst_hgb)
+```
+
+```{r}
+fd <- ggplot(df_f, aes(x = lwst_hgb, y = fittedAll_prob_f)) + geom_point(alpha = 0.7, color = "#404080") + theme_classic() + xlab("Lowest Post-operative HGB") + ylab("Probability of Receiving Blood Products") + ggtitle("Transfusion Trend in Female  Patients") + xlim(4, 12.5) 
+
+fd <- ggMarginal(fd, type = "boxplot", margins = "x", color = "#404080", fill = "white", binwidth = 0.05) 
+
+ggsave(filename = "allFemaleDecision_hgb.jpeg", device='tiff', dpi=700)
+```
+
+```{r}
+summary(df_f$lwst_hgb)
+```
+
+## Fit a logistic model to predict the probability of receiving blood transfusion post operatively in all surgeries by sex and race!
+```{r}
+df <- df[!is.na(df$lwst_hgb),]
+
+fit_all_m_racew <- glm(bldprod ~ lwst_hgb, family = binomial, data = df[df$gender == 1&df$race==1,])
+fit_all_f_racew <- glm(bldprod ~ lwst_hgb, family = binomial, data = df[df$gender == 2&df$race==1,])
+fit_all_m_raceb <- glm(bldprod ~ lwst_hgb, family = binomial, data = df[df$gender == 1&df$race==2,])
+fit_all_f_raceb <- glm(bldprod ~ lwst_hgb, family = binomial, data = df[df$gender == 2&df$race==2,])
+
+# Obtain fitted values for male and female patients separately
+df_mw <- df[df$gender==1&df$race==1&,]
+df_fw <- df[df$gender==2&df$race==1,]
+df_mb <- df[df$gender==1&df$race==2,]
+df_fb <- df[df$gender==2&df$race==2,]
+df_mw <- df_mw[!is.na(df_mw$lwst_hgb),]
+df_fw <- df_fw[!is.na(df_fw$lwst_hgb),]
+df_mb <- df_mb[!is.na(df_mb$lwst_hgb),]
+df_fb <- df_fb[!is.na(df_fb$lwst_hgb),]
+
+
+df_mw$fittedAll_prob_m_racew <- fit_all_m_racew$fitted.values
+df_mw$all_sigmoid_mw <- df_mw$fittedAll_prob_m_racew/(1-df_mw$fittedAll_prob_m_racew)
+df_fw$fittedAll_prob_f_racew <- fit_all_f_racew$fitted.values
+df_fw$all_sigmoid_fw <- df_fw$fittedAll_prob_f_racew/(1-df_fw$fittedAll_prob_f_racew)
+
+df_mb$fittedAll_prob_m_raceb <- fit_all_m_raceb$fitted.values
+df_mb$all_sigmoid_mb <- df_mb$fittedAll_prob_m_raceb/(1-df_mb$fittedAll_prob_m_raceb)
+df_fb$fittedAll_prob_f_raceb <- fit_all_f_raceb$fitted.values
+df_fb$all_sigmoid_fb <- df_fb$fittedAll_prob_f_raceb/(1-df_fb$fittedAll_prob_f_raceb)
+```
+
+## Construct the decision curve for all procedures
+```{r}
+ggplot(df_mw, aes(x = lwst_hgb, y = fittedAll_prob_m_racew)) + geom_point(alpha = 0.7, color = "#404080") + theme_classic() + xlab("Lowest Post-operative HCT") + ylab("Probability of Receiving Blood Products") + ggtitle("Transfusion Trend in White Male Patients") + xlim(3, 12.5)
+
+ggsave(filename = "allWMaleDecision_hgb.jpeg", device='tiff', dpi=700)
+```
+
+```{r}
+ggplot(df_mb, aes(x = lwst_hgb, y = fittedAll_prob_m_raceb)) + geom_point(alpha = 0.7, color = "#404080") + theme_classic() + xlab("Lowest Post-operative HCT") + ylab("Probability of Receiving Blood Products") + ggtitle("Transfusion Trend in Black Male Patients") + xlim(3, 12.5)
+
+ggsave(filename = "allBMaleDecision_hgb.jpeg", device='tiff', dpi=700)
+```
+
+```{r}
+ggplot(df_fw, aes(x = lwst_hgb, y = fittedAll_prob_f_racew)) + geom_point(alpha = 0.7, color = "#404080") + theme_classic() + xlab("Lowest Post-operative HCT") + ylab("Probability of Receiving Blood Products") + ggtitle("Transfusion Decision in White Female  Patients") + xlim(3, 12.5)
+
+ggsave(filename = "allWFemaleDecision_hgb.jpeg", device='tiff', dpi=700)
+```
+
+```{r}
+ggplot(df_fb, aes(x = lwst_hgb, y = fittedAll_prob_f_raceb)) + geom_point(alpha = 0.7, color = "#404080") + theme_classic() + xlab("Lowest Post-operative HCT") + ylab("Probability of Receiving Blood Products") + ggtitle("Transfusion Decision in Black Female  Patients") + xlim(3, 12.5)
+
+ggsave(filename = "allBFemaleDecision_hgb.jpeg", device='tiff', dpi=700)
+```
+
+## Note that the male decision curve indicates that hgb = 7.5 is likely to be a decision point. In female patients, the postoperative hgb level is still informative regarding whether receiving blood product or not as it shows a linear trend, however, it is less clear where the main decision point is.
+
+## Fit a logistic model to predict the probability of receiving blood transfusion post operatively in aorta surgeries. 
+```{r}
+fit_all_m <- glm(bldprod ~ lwst_hgb, family = binomial, data = df[df$gender == 1&df$aorta == 1,])
+fit_all_f <- glm(bldprod ~ lwst_hgb, family = binomial, data = df[df$gender == 2&df$aorta == 1,])
+
+# Obtain fitted values for male and female patients separately
+df_m <- df[df$gender==1&df$aorta == 1,]
+df_f <- df[df$gender==2&df$aorta == 1,]
+
+df_m$fittedAll_prob_m <- fit_all_m$fitted.values
+df_m$all_sigmoid_m <- df_m$fittedAll_prob_m/(1-df_m$fittedAll_prob_m)
+
+df_f$fittedAll_prob_f <- fit_all_f$fitted.values
+df_f$all_sigmoid_f <- df_f$fittedAll_prob_f/(1-df_f$fittedAll_prob_f)
+```
+
+## Construct the decision curve for aortic procedures
+```{r}
+ggplot(df_m, aes(x = lwst_hgb, y = fittedAll_prob_m)) + geom_point(alpha = 0.7, color = "#404080") + theme_classic() + xlab("Lowest Post-operative HCT") + ylab("Probability of Receiving Blood Products") + ggtitle("Transfusion Decision in Male Aorta Patients") + xlim(3, 12.5)
+
+ggsave(filename = "aortaMaleDecision_hgb.jpeg", device='tiff', dpi=700)
+```
+
+```{r}
+ggplot(df_f, aes(x = lwst_hgb, y = fittedAll_prob_f)) + geom_point(alpha = 0.7, color = "#404080") + theme_classic() + xlab("Lowest Post-operative HCT") + ylab("Probability of Receiving Blood Products") + ggtitle("Transfusion Decision in Female Aorta Patients") + xlim(3, 12.5)
+
+ggsave(filename = "aortaFemaleDecision_hgb.jpeg", device='tiff', dpi=700)
+```
+
+## Fit a logistic model to predict the probability of receiving blood transfusion post operatively in cabg surgeries. 
+```{r}
+fit_all_m <- glm(bldprod ~ lwst_hgb, family = binomial, data = df[df$gender == 1&df$cabg == 1,])
+fit_all_f <- glm(bldprod ~ lwst_hgb, family = binomial, data = df[df$gender == 2&df$cabg == 1,])
+
+# Obtain fitted values for male and female patients separately
+df_m <- df[df$gender==1&df$cabg == 1,]
+df_f <- df[df$gender==2&df$cabg == 1,]
+
+df_m$fittedAll_prob_m <- fit_all_m$fitted.values
+df_m$all_sigmoid_m <- df_m$fittedAll_prob_m/(1-df_m$fittedAll_prob_m)
+
+df_f$fittedAll_prob_f <- fit_all_f$fitted.values
+df_f$all_sigmoid_f <- df_f$fittedAll_prob_f/(1-df_f$fittedAll_prob_f)
+```
+
+## Construct the decision curve for all procedures
+```{r}
+ggplot(df_m, aes(x = lwst_hgb, y = fittedAll_prob_m)) + geom_point(alpha = 0.7, color = "#404080") + theme_classic() + xlab("Lowest Post-operative HCT") + ylab("Probability of Receiving Blood Products") + ggtitle("Transfusion Decision in Male CABG Patients") + xlim(3, 12.5)
+
+ggsave(filename = "cabgMaleDecision_hgb.jpeg", device='tiff', dpi=700)
+```
+
+```{r}
+ggplot(df_f, aes(x = lwst_hgb, y = fittedAll_prob_f)) + geom_point(alpha = 0.7, color = "#404080") + theme_classic() + xlab("Lowest Post-operative HCT") + ylab("Probability of Receiving Blood Products") + ggtitle("Transfusion Decision in Female cabg Patients") + xlim(3, 12.5)
+
+ggsave(filename = "cabgFemaleDecision_hgb.jpeg", device='tiff', dpi=700)
+```
+
+## Fit a logistic model to predict the probability of receiving blood transfusion post operatively in valve surgeries. 
+```{r}
+fit_all_m <- glm(bldprod ~ lwst_hgb, family = binomial, data = df[df$gender == 1&df$valve == 1,])
+fit_all_f <- glm(bldprod ~ lwst_hgb, family = binomial, data = df[df$gender == 2&df$valve == 1,])
+
+# Obtain fitted values for male and female patients separately
+df_m <- df[df$gender==1&df$valve == 1,]
+df_f <- df[df$gender==2&df$valve == 1,]
+
+df_m$fittedAll_prob_m <- fit_all_m$fitted.values
+df_m$all_sigmoid_m <- df_m$fittedAll_prob_m/(1-df_m$fittedAll_prob_m)
+
+df_f$fittedAll_prob_f <- fit_all_f$fitted.values
+df_f$all_sigmoid_f <- df_f$fittedAll_prob_f/(1-df_f$fittedAll_prob_f)
+```
+
+## Construct the decision curve for all procedures
+```{r}
+ggplot(df_m, aes(x = lwst_hgb, y = fittedAll_prob_m)) + geom_point(alpha = 0.7, color = "#404080") + theme_classic() + xlab("Lowest Post-operative HCT") + ylab("Probability of Receiving Blood Products") + ggtitle("Transfusion Decision in Male Valve Patients") + xlim(3, 12.5)
+
+ggsave(filename = "valveMaleDecision_hgb.jpeg", device='tiff', dpi=700)
+```
+
+```{r}
+ggplot(df_f, aes(x = lwst_hgb, y = fittedAll_prob_f)) + geom_point(alpha = 0.7, color = "#404080") + theme_classic() + xlab("Lowest Post-operative HCT") + ylab("Probability of Receiving Blood Products") + ggtitle("Transfusion Decision in Female Valve Patients") + xlim(3, 12.5)
+
+ggsave(filename = "valveFemaleDecision_hgb.jpeg", device='tiff', dpi=700)
+```
+
+########################################################################################################
+# Section 4. Explore the "theory" of giving transfusion to patients from a frailty perspective. 
+
+## First investigate age and transfusion in men and women in all procedures by sex
+```{r}
+age_m <- glm(bldprod ~ lwst_hgb + age + I(lwst_hgb * age), data = df[df$gender == 1,], family = binomial)
+age_f <- glm(bldprod ~ lwst_hgb + age + I(lwst_hgb * age), data = df[df$gender == 2,], family = binomial)
+
+summary(age_m)
+summary(age_f)
+```
+
+## Then investigate weight and transfusion in men and women in all surgery by sex
+```{r}
+wt_m <- glm(bldprod ~ lwst_hgb + age + weightkg + I(lwst_hgb * weightkg), data = df[df$gender == 1,], family = binomial)
+wt_f <- glm(bldprod ~ lwst_hgb + age + weightkg + I(lwst_hgb * weightkg), data = df[df$gender == 2,], family = binomial)
+
+summary(wt_m)
+summary(wt_f)
+```
+
+## Now swith to aortic procedures
+## Firstinvestigate age and transfusion in men and women in aortic procedures by sex
+```{r}
+age_m <- glm(bldprod ~ lwst_hgb + age + I(lwst_hgb * age), data = df[df$gender == 1&df$aorta == 1,], family = binomial)
+age_f <- glm(bldprod ~ lwst_hgb + age + I(lwst_hgb * age), data = df[df$gender == 2&df$aorta == 1,], family = binomial)
+
+summary(age_m)
+summary(age_f)
+```
+
+## Then investigate weight and transfusion in men and women in aortic surgery by sex
+```{r}
+wt_m <- glm(bldprod ~ lwst_hgb + age + weightkg + I(lwst_hgb * weightkg), data = df[df$gender == 1&df$aorta == 1,], family = binomial)
+wt_f <- glm(bldprod ~ lwst_hgb + age + weightkg + I(lwst_hgb * weightkg), data = df[df$gender == 2&df$aorta == 1,], family = binomial)
+
+summary(wt_m)
+summary(wt_f)
+```
+
+## Now swith to valve procedures
+## Firstinvestigate age and transfusion in men and women in valve procedures by sex
+```{r}
+age_m <- glm(bldprod ~ lwst_hgb + age + I(lwst_hgb * age), data = df[df$gender == 1&df$valve == 1,], family = binomial)
+age_f <- glm(bldprod ~ lwst_hgb + age + I(lwst_hgb * age), data = df[df$gender == 2&df$valve == 1,], family = binomial)
+
+summary(age_m)
+summary(age_f)
+```
+
+## Then investigate weight and transfusion in men and women in aortic valves by sex
+```{r}
+wt_m <- glm(bldprod ~ lwst_hgb + age + weightkg + I(lwst_hgb * weightkg), data = df[df$gender == 1&df$valve == 1,], family = binomial)
+wt_f <- glm(bldprod ~ lwst_hgb + age + weightkg + I(lwst_hgb * weightkg), data = df[df$gender == 2&df$valve == 1,], family = binomial)
+
+summary(wt_m)
+summary(wt_f)
+```
+
+## Now swith to cabg procedures
+## Firstinvestigate age and transfusion in men and women in cabg procedures by sex
+```{r}
+age_m <- glm(bldprod ~ lwst_hgb + age + I(lwst_hgb * age), data = df[df$gender == 1&df$cabg == 1,], family = binomial)
+age_f <- glm(bldprod ~ lwst_hgb + age + I(lwst_hgb * age), data = df[df$gender == 2&df$cabg == 1,], family = binomial)
+
+summary(age_m)
+summary(age_f)
+```
+
+## Then investigate weight and transfusion in men and women in aortic valves by sex
+```{r}
+wt_m <- glm(bldprod ~ lwst_hgb + age + weightkg + I(lwst_hgb * weightkg), data = df[df$gender == 1&df$cabg == 1,], family = binomial)
+wt_f <- glm(bldprod ~ lwst_hgb + age + weightkg + I(lwst_hgb * weightkg), data = df[df$gender == 2&df$cabg == 1,], family = binomial)
+
+summary(wt_m)
+summary(wt_f)
+```
+
+######################################################################################
+
+# Exploratory analysis, explore other factors that may cause 
+
+## Race 
+```{r}
+df %>% group_by(race) %>% summarise(Count = n(), Mean = mean(rfhemoglobin), Median = median(rfhemoglobin), SD = sd(rfhemoglobin), IQR = IQR(rfhemoglobin))
+```
+
+### Note this look interesting, shall plot it out and explore further
+```{r}
+print(CreateTableOne("rfhemoglobin", strata = "race", data = df[df$gender==1,]), smd = T)
+print(CreateTableOne("rfhemoglobin", strata = "race", data = df[df$gender==2,]), smd = T)
+```
+
+### Only include white and black for simplicity
+```{r}
+dfRaceSub <- df[df$race %in% c(1, 2),]
+#dfRaceSub$race <- droplevels(dfRaceSub$race)
+print(CreateTableOne("rfhemoglobin", strata = "race", data = dfRaceSub[dfRaceSub$gender==1,]), smd = T)
+print(CreateTableOne("rfhemoglobin", strata = "race", data = dfRaceSub[dfRaceSub$gender==2,]), smd = T)
+
+print(CreateTableOne("postophemoglobin", strata = "race", data = dfRaceSub[dfRaceSub$gender==1,]), smd = T)
+print(CreateTableOne("postophemoglobin", strata = "race", data = dfRaceSub[dfRaceSub$gender==2,]), smd = T)
+```
+
+### Kolmogorov–Smirnov test
+```{r}
+ks.test(dfRaceSub[dfRaceSub$gender==1&dfRaceSub$race==1,]$rfhemoglobin, dfRaceSub[dfRaceSub$gender==1&dfRaceSub$race==2,]$rfhemoglobin)
+ks.test(dfRaceSub[dfRaceSub$gender==1&dfRaceSub$race==1,]$postophemoglobin, dfRaceSub[dfRaceSub$gender==1&dfRaceSub$race==2,]$postophemoglobin)
+
+ks.test(dfRaceSub[dfRaceSub$gender==2&dfRaceSub$race==1,]$rfhemoglobin, dfRaceSub[dfRaceSub$gender==2&dfRaceSub$race==2,]$rfhemoglobin)
+ks.test(dfRaceSub[dfRaceSub$gender==2&dfRaceSub$race==1,]$postophemoglobin, dfRaceSub[dfRaceSub$gender==2&dfRaceSub$race==2,]$postophemoglobin)
+```
+
+## Chronic Lung Disease
+```{r}
+df %>% group_by(gender, chrlungd) %>% summarise(Count = n(), Mean = mean(rfhemoglobin), Median = median(rfhemoglobin), SD = sd(rfhemoglobin), IQR = IQR(rfhemoglobin))
+```
+
+### Note this look interesting, shall plot it out and explore further
+
+```{r}
+print(CreateTableOne("rfhemoglobin", strata = c("chrlungd"), data = df[df$gender==1,]), smd = T)
+print(CreateTableOne("rfhemoglobin", strata = c("chrlungd"), data = df[df$gender==2,]), smd = T)
+
+print(CreateTableOne("postophemoglobin", strata = c("chrlungd"), data = df[df$gender==1,]), smd = T)
+print(CreateTableOne("postophemoglobin", strata = c("chrlungd"), data = df[df$gender==2,]), smd = T)
+```
+
+### Kolmogorov–Smirnov test
+```{r}
+ks.test(df[df$gender==1&df$chrlungd==1,]$rfhemoglobin, df[df$gender==1&df$chrlungd==0,]$rfhemoglobin)
+ks.test(df[df$gender==1&df$chrlungd==1,]$postophemoglobin, df[df$gender==1&df$chrlungd==0,]$postophemoglobin)
+
+ks.test(df[df$gender==2&df$chrlungd==1,]$rfhemoglobin, df[df$gender==2&df$chrlungd==0,]$rfhemoglobin)
+ks.test(df[df$gender==2&df$chrlungd==1,]$postophemoglobin, df[df$gender==2&df$chrlungd==0,]$postophemoglobin)
+```
+
+## Age
+```{r}
+# Female age category
+df$ageCat_f <- NA
+df[df$gender==2,]$ageCat_f[df[df$gender==2,]$age<=35] <- 1
+df[df$gender==2,]$ageCat_f[df[df$gender==2,]$age<=45&df[df$gender==2,]$age>35] <- 2
+df[df$gender==2,]$ageCat_f[df[df$gender==2,]$age<=55&df[df$gender==2,]$age>45] <- 3
+df[df$gender==2,]$ageCat_f[df[df$gender==2,]$age<=65&df[df$gender==2,]$age>55] <- 4
+df[df$gender==2,]$ageCat_f[df[df$gender==2,]$age<=75&df[df$gender==2,]$age>65] <- 5
+df[df$gender==2,]$ageCat_f[df[df$gender==2,]$age>75] <- 6
+df$ageCat_f <- as.factor(df$ageCat_f)
+levels(df$ageCat_f) <- c("<= 35", "36 - 45", "46 - 55", "56 - 65", "66 - 75", ">75")
+```
+
+```{r}
+df[df$gender == 2,] %>% group_by(ageCat_f) %>% summarise(Count = n(), Mean = mean(rfhemoglobin), Median = median(rfhemoglobin), SD = sd(rfhemoglobin), IQR = IQR(rfhemoglobin))
+```
+
+```{r}
+# Male age category
+df$ageCat_m <- NA
+df[df$gender==1,]$ageCat_m[df[df$gender==1,]$age<=35] <- 1
+df[df$gender==1,]$ageCat_m[df[df$gender==1,]$age<=45&df[df$gender==2,]$age>35] <- 2
+df[df$gender==1,]$ageCat_m[df[df$gender==1,]$age<=55&df[df$gender==2,]$age>45] <- 3
+df[df$gender==1,]$ageCat_m[df[df$gender==1,]$age<=65&df[df$gender==2,]$age>55] <- 4
+df[df$gender==1,]$ageCat_m[df[df$gender==1,]$age<=75&df[df$gender==2,]$age>65] <- 5
+df[df$gender==1,]$ageCat_m[df[df$gender==1,]$age>75] <- 6
+df$ageCat_m <- as.factor(df$ageCat_m)
+levels(df$ageCat_m) <- c("<= 35", "36 - 45", "46 - 55", "56 - 65", "66 - 75", ">75")
+```
+
+```{r}
+df[df$gender == 1,] %>% group_by(ageCat_m) %>% summarise(Count = n(), Mean = mean(rfhemoglobin), Median = median(rfhemoglobin), SD = sd(rfhemoglobin), IQR = IQR(rfhemoglobin))
+```
+
+### Note, does not look extremely interesting
+
+## CVD
+```{r}
+df[df$cvd != 3,] %>% group_by(gender, cvd) %>% summarise(Count = n(), Mean = mean(rfhemoglobin), Median = median(rfhemoglobin), SD = sd(rfhemoglobin), IQR = IQR(rfhemoglobin))
+```
+
+### Interesting in men
+```{r}
+print(CreateTableOne("rfhemoglobin", strata = c("cvd"), data = df[df$gender==1,]), smd = T)
+print(CreateTableOne("rfhemoglobin", strata = c("cvd"), data = df[df$gender==2,]), smd = T)
+
+print(CreateTableOne("postophemoglobin", strata = c("cvd"), data = df[df$gender==1,]), smd = T)
+print(CreateTableOne("postophemoglobin", strata = c("cvd"), data = df[df$gender==2,]), smd = T)
+```
+
+### Kolmogorov–Smirnov test
+```{r}
+ks.test(df[df$gender==1&df$cvd==1,]$rfhemoglobin, df[df$gender==1&df$cvd==2,]$rfhemoglobin)
+ks.test(df[df$gender==1&df$cvd==1,]$postophemoglobin, df[df$gender==1&df$cvd==2,]$postophemoglobin)
+
+ks.test(df[df$gender==2&df$cvd==1,]$rfhemoglobin, df[df$gender==2&df$cvd==2,]$rfhemoglobin)
+ks.test(df[df$gender==2&df$cvd==1,]$postophemoglobin, df[df$gender==2&df$cvd==2,]$postophemoglobin)
+```
+
+## Hypertension
+```{r}
+df[df$hypertn != 3,] %>% group_by(gender, hypertn) %>% summarise(Count = n(), Mean = mean(rfhemoglobin), Median = median(rfhemoglobin), SD = sd(rfhemoglobin), IQR = IQR(rfhemoglobin))
+```
+
+### Could be interesting.
+```{r}
+print(CreateTableOne("rfhemoglobin", strata = c("hypertn"), data = df[df$hypertn != 3&df$gender==1,]), smd = T)
+print(CreateTableOne("rfhemoglobin", strata = c("hypertn"), data = df[df$hypertn != 3&df$gender==2,]), smd = T)
+
+print(CreateTableOne("postophemoglobin", strata = c("hypertn"), data = df[df$hypertn != 3&df$gender==1,]), smd = T)
+print(CreateTableOne("postophemoglobin", strata = c("hypertn"), data = df[df$hypertn != 3&df$gender==2,]), smd = T)
+```
+
+### Kolmogorov–Smirnov test
+```{r}
+ks.test(df[df$gender==1&df$hypertn==1,]$rfhemoglobin, df[df$gender==1&df$hypertn==2,]$rfhemoglobin)
+ks.test(df[df$gender==1&df$hypertn==1,]$postophemoglobin, df[df$gender==1&df$hypertn==2,]$postophemoglobin)
+
+ks.test(df[df$gender==2&df$hypertn==1,]$rfhemoglobin, df[df$gender==2&df$hypertn==2,]$rfhemoglobin)
+ks.test(df[df$gender==2&df$hypertn==1,]$postophemoglobin, df[df$gender==2&df$hypertn==2,]$postophemoglobin)
+```
+
+## Tobacco
+```{r}
+df_sts <- read.csv("STS_data_03282014_12312020.csv")
+df_sts$tobaccouse_recode[df_sts$tobaccouse== 1] <- "Never Smoker"
+df_sts$tobaccouse_recode[df_sts$tobaccouse %in% c(2,3,4)] <- "Current Smoker"
+df_sts$tobaccouse_recode[df_sts$tobaccouse== 5] <- "Former Smoker"
+
+df_sts[df_sts$tobaccouse!=6,] %>% group_by(gender, tobaccouse_recode) %>% summarise(Count = n(), Mean = mean(rfhemoglobin, na.rm = T), Median = median(rfhemoglobin, na.rm = T), SD = sd(rfhemoglobin, na.rm = T), IQR = IQR(rfhemoglobin, na.rm = T))
+```
+
+### Not interesting
+
+## Hyperlipidemia
+```{r}
+df %>% group_by(gender, dyslip) %>% summarise(Count = n(), Mean = mean(rfhemoglobin), Median = median(rfhemoglobin), SD = sd(rfhemoglobin), IQR = IQR(rfhemoglobin))
+```
+
+### Not interesting 
+
+## PVD
+```{r}
+df %>% group_by(gender, pvd) %>% summarise(Count = n(), Mean = mean(rfhemoglobin), Median = median(rfhemoglobin), SD = sd(rfhemoglobin), IQR = IQR(rfhemoglobin))
+```
+
+### Might be interesting
+```{r}
+print(CreateTableOne("rfhemoglobin", strata = "pvd", data = df[df$gender==1&df$pvd !=3,]), smd = T)
+print(CreateTableOne("rfhemoglobin", strata = "pvd", data = df[df$gender==2&df$pvd !=3,]), smd = T)
+
+print(CreateTableOne("postophemoglobin", strata = "pvd", data = df[df$gender==1&df$pvd !=3,]), smd = T)
+print(CreateTableOne("postophemoglobin", strata = "pvd", data = df[df$gender==2&df$pvd !=3,]), smd = T)
+```
+
+```{r}
+ks.test(df[df$gender==1&df$pvd==1,]$rfhemoglobin, df[df$gender==1&df$pvd==2,]$rfhemoglobin)
+ks.test(df[df$gender==1&df$pvd==1,]$postophemoglobin, df[df$gender==1&df$pvd==2,]$postophemoglobin)
+
+ks.test(df[df$gender==2&df$pvd==1,]$rfhemoglobin, df[df$gender==2&df$pvd==2,]$rfhemoglobin)
+ks.test(df[df$gender==2&df$pvd==1,]$postophemoglobin, df[df$gender==2&df$pvd==2,]$postophemoglobin)
+```
+
+## Diabetes
+```{r}
+df %>% group_by(gender, diabetes) %>% summarise(Count = n(), Mean = mean(rfhemoglobin), Median = median(rfhemoglobin), SD = sd(rfhemoglobin), IQR = IQR(rfhemoglobin))
+```
+
+### Might be interesting
+```{r}
+print(CreateTableOne("rfhemoglobin", strata = "diabetes", data = df[df$gender==1&df$diabetes !=3,]), smd = T)
+print(CreateTableOne("rfhemoglobin", strata = "diabetes", data = df[df$gender==2&df$diabetes  !=3,]), smd = T)
+
+print(CreateTableOne("postophemoglobin", strata = "diabetes", data = df[df$gender==1&df$diabetes !=3,]), smd = T)
+print(CreateTableOne("postophemoglobin", strata = "diabetes", data = df[df$gender==2&df$diabetes  !=3,]), smd = T)
+```
+
+### Kolmogorov–Smirnov test
+```{r}
+ks.test(df[df$gender==1&df$diabetes==1,]$rfhemoglobin, df[df$gender==1&df$diabetes==2,]$rfhemoglobin)
+ks.test(df[df$gender==1&df$diabetes==1,]$postophemoglobin, df[df$gender==1&df$diabetes==2,]$postophemoglobin)
+
+ks.test(df[df$gender==2&df$diabetes==1,]$rfhemoglobin, df[df$gender==2&df$diabetes==2,]$rfhemoglobin)
+ks.test(df[df$gender==2&df$diabetes==1,]$postophemoglobin, df[df$gender==2&df$diabetes==2,]$postophemoglobin)
+```
+
+# Blood donation analysis
+```{r}
+dona <- read.csv("FY04_present_donations_hgb.csv")
+
+# remove records without hemoglobin levels
+dona <- dona[!is.na(dona$Hemoglobin) & dona$Gender %in% c("F", "M") & dona$Hemoglobin < 30,]
+dona$gender <- ifelse(dona$Gender=="M", 1, 2)
+ids <- unique(dona$Donor.ID)
+```
+
+## Only keep the first donation record for repeating donors. 
+```{r}
+dona_trim <- setDT(dona)[order(Date), head(.SD, 1L), by = Donor.ID]
+```
+
+```{r}
+dona_trim_f <- dona_trim[dona_trim$gender==1,]
+summary(dona_trim_f$Hemoglobin)
+
+dona_trim_m <- dona_trim[dona_trim$gender==2,]
+summary(dona_trim_m$Hemoglobin)
+```
+
+```{r}
+ggplot(dona_trim, aes(x = Hemoglobin, color = as.factor(gender), fill = as.factor(gender))) + geom_histogram(binwidth = .2, color = "#e9ecef", alpha = 0.7, position = "dodge") + scale_fill_manual(values = c("#69b3a2", "#404080"), name = "Sex", labels = c("Male", "Female")) + scale_color_manual(values = c("#69b3a2", "#404080"), name = "Sex", labels = c("Male", "Female")) + geom_density(aes(y = ..count../5),alpha = 0.1) + guides(color = FALSE) + geom_vline(xintercept = median(dona_trim[dona_trim$gender == 1,]$Hemoglobin, na.rm = T), linetype = "dashed", color = "#69b3a2") + geom_vline(xintercept = median(dona_trim[dona_trim$gender == 2,]$Hemoglobin, na.rm = T), linetype = "dashed", color = "#404080") + ggtitle("Blood Donor HGB Distribution by Gender") + theme_classic() + xlim(5, 20) + xlab("Hemoglobin (g/dl)") 
+
+ggsave(filename = "bloodTrasfusion_Figure1_donorHGBDist_byGender.jpeg", device='tiff', dpi=700)
+
+donor_gender <- ggplot(dona_trim, aes(x = Hemoglobin, color = as.factor(gender), fill = as.factor(gender))) + geom_histogram(binwidth = .2, color = "#e9ecef", alpha = 0.7, position = "dodge") + scale_fill_manual(values = c("#69b3a2", "#404080"), name = "Sex", labels = c("Male", "Female")) + scale_color_manual(values = c("#69b3a2", "#404080"), name = "Sex", labels = c("Male", "Female")) + geom_density(aes(y = ..count../5),alpha = 0.1) + guides(color = FALSE) + geom_vline(xintercept = median(dona_trim[dona_trim$gender == 1,]$Hemoglobin, na.rm = T), linetype = "dashed", color = "#69b3a2") + geom_vline(xintercept = median(dona_trim[dona_trim$gender == 2,]$Hemoglobin, na.rm = T), linetype = "dashed", color = "#404080") + ggtitle("Blood Donor HGB Distribution by Gender") + theme_classic() + xlim(5, 20) + xlab("Hemoglobin (g/dl)")
+```
+
+```{r}
+summary(dona_trim$Hemoglobin)
+
+t.test(dona_trim[dona_trim$gender==1,]$Hemoglobin, dona_trim[dona_trim$gender==2,]$Hemoglobin)
+```
+
+```{r}
+median(dona_trim[dona_trim$gender==1,]$Hemoglobin)
+median(dona_trim[dona_trim$gender==2,]$Hemoglobin)
+```
+
+## Now put all the histograms together
+```{r}
+plot_grid(donor_gender, surg_grid, labels = c("A"), ncol = 1, rel_heights = c(1,2)) 
+```
+
+## Extract donation year
+```{r}
+dona_trim$year <- substr(dona_trim$Date, 6, 9) %>% as.numeric()
+```
+
+# Matched sample comparison across sex
+
+```{r}
+library(MatchIt)
+library(sandwich)
+library(lmtest)
+library(optmatch)
+library(RItools)
+```
+
+## Matched comparison on all populations
+```{r}
+# recode classnyh
+df$classnyh[is.na(df$classnyh)] <- 999
+```
+
+```{r}
+matchVars <- c("age", "race","diabetes", "classnyh", "dyslip", "hypertn", "infendo", "chrlungd", "pvd", "thaodisease", "cvd", "vdinsufa", "creatlst", "egfr",  "status", "prelvef")
+# adding perfusion time and cross clamping time
+matchVars2 <- c("age", "race","diabetes", "classnyh", "dyslip", "hypertn", "infendo", "chrlungd", "pvd", "thaodisease", "cvd", "vdinsufa", "creatlst", "egfr",  "status", "prelvef", "perfustm", "xclamptm") # "classnyh" although important, too many missing values "egfrCat",
+```
+
+```{r}
+df_complete <- df[complete.cases(df[,matchVars]), c("gender", "rfhemoglobin", "postophemoglobin", "lwst_hgb",  matchVars)]
+df_complete$gender <- ifelse(df_complete$gender == 1, 1, 0)
+```
+
+## All patients
+```{r}
+print(CreateTableOne(vars = c("rfhemoglobin", "postophemoglobin"), strata = "gender", data = df_complete), smd = T)
+```
+
+```{r}
+psm_all <- glm(gender ~ ., data = df_complete[,c("gender", matchVars)], family = binomial)
+matchAll <- match_on(gender ~ scores(psm_all), data = df_complete[,c("gender", matchVars)])
+matchAllpm <- pairmatch(matchAll, caliper = 1, data = df_complete[,c("gender", matchVars)])
+balTabAll <- xBalance(gender ~ .+strata(matchAllpm), data = df_complete[,c("gender", matchVars)], report = c("adj.means", "std.diffs"))
+plot(balTabAll)
+print(balTabAll, digits = 1)
+df_complete$groupAll <- matchAllpm
+```
+
+```{r}
+fitAllpre <- lm(rfhemoglobin ~ ., data = df_complete[,c("gender", "rfhemoglobin", matchVars)], weights = df_complete$matchAllpm)
+coeftest(fitAllpre, vcov = sandwich)
+coefci(fitAllpre, vcov = sandwich)
+```
+
+```{r}
+fitAllpost <- lm(postophemoglobin ~ ., data = df_complete[,c("gender", "postophemoglobin", matchVars)], weights = df_complete$matchAllpm)
+coeftest(fitAllpost, vcov = sandwich)
+coefci(fitAllpost, vcov = sandwich)
+```
+
+## CABG Patients
+```{r}
+df_complete <- df[complete.cases(df[,matchVars])&df$cabg == 1, c("gender", "rfhemoglobin", "postophemoglobin", "lwst_hgb",  matchVars)]
+df_complete$gender <- ifelse(df_complete$gender == 1, 1, 0)
+```
+
+```{r}
+print(CreateTableOne(vars = c("rfhemoglobin", "postophemoglobin"), strata = "gender", data = df_complete), smd = T)
+```
+
+```{r}
+psm_cabg <- glm(gender ~ ., data = df_complete[, c("gender", matchVars)], family = binomial)
+matchCabg <- match_on(gender ~ scores(psm_cabg), data = df_complete[,c("gender", matchVars)])
+matchCabgpm <- pairmatch(matchCabg, caliper = 1, data = df_complete[,c("gender", matchVars)])
+balTabCabg <- xBalance(gender ~ .+strata(matchCabgpm), data = df_complete[,c("gender", matchVars)], report = c("adj.means", "std.diffs"))
+plot(balTabCabg)
+print(balTabCabg, digits = 1)
+df_complete$groupCabg <- matchCabgpm
+```
+
+```{r}
+fitCabgpre <- lm(rfhemoglobin ~ ., data = df_complete[,c("gender", "rfhemoglobin", matchVars)], weights = df_complete$matchCabgpm)
+coeftest(fitCabgpre, vcov = sandwich)
+coefci(fitCabgpre, vcov = sandwich)
+```
+
+```{r}
+fitCabgpost <- lm(postophemoglobin ~ ., data = df_complete[,c("gender", "postophemoglobin", matchVars)], weights = df_complete$matchCabgpm)
+coeftest(fitCabgpost, vcov = sandwich)
+coefci(fitCabgpost, vcov = sandwich)
+```
+
+## Valve Patients
+```{r}
+df_complete <- df[complete.cases(df[,matchVars])&df$valve == 1, c("gender", "rfhemoglobin", "postophemoglobin",  matchVars)]
+df_complete$gender <- ifelse(df_complete$gender == 1, 1, 0)
+```
+
+```{r}
+print(CreateTableOne(vars = c("rfhemoglobin", "postophemoglobin"), strata = "gender", data = df_complete), smd = T)
+```
+
+```{r}
+psm_valve <- glm(gender ~ ., data = df_complete[, c("gender", matchVars)], family = binomial)
+matchValve <- match_on(gender ~ scores(psm_valve), data = df_complete[,c("gender", matchVars)])
+matchValvepm <- pairmatch(matchValve, caliper = 1, data = df_complete[,c("gender", matchVars)])
+balTabValve <- xBalance(gender ~ .+strata(matchValvepm), data = df_complete[,c("gender", matchVars)], report = c("adj.means", "std.diffs"))
+plot(balTabValve)
+print(balTabValve, digits = 1)
+df_complete$groupValve <- matchValvepm
+```
+
+```{r}
+fitValvepre <- lm(rfhemoglobin ~ ., data = df_complete[,c("gender", "rfhemoglobin", matchVars)], weights = df_complete$matchValvepm)
+coeftest(fitValvepre, vcov = sandwich)
+coefci(fitValvepre, vcov = sandwich)
+```
+
+```{r}
+fitValvepost <- lm(postophemoglobin ~ ., data = df_complete[,c("gender", "postophemoglobin", matchVars)], weights = df_complete$matchValvepm)
+coeftest(fitValvepost, vcov = sandwich)
+coefci(fitValvepost, vcov = sandwich)
+```
+
+## Aorta Patients
+```{r}
+df_complete <- df[complete.cases(df[,matchVars])&df$aorta == 1, c("gender", "rfhemoglobin", "postophemoglobin",  matchVars)]
+df_complete$gender <- ifelse(df_complete$gender == 1, 1, 0)
+```
+
+```{r}
+print(CreateTableOne(vars = c("rfhemoglobin", "postophemoglobin"), strata = "gender", data = df_complete), smd = T)
+```
+
+```{r}
+psm_aorta <- glm(gender ~ ., data = df_complete[, c("gender", matchVars)], family = binomial)
+matchAorta <- match_on(gender ~ scores(psm_aorta), data = df_complete[,c("gender", matchVars)])
+matchAortapm <- pairmatch(matchAorta, caliper = 1, data = df_complete[,c("gender", matchVars)])
+balTabAorta <- xBalance(gender ~ .+strata(matchAortapm), data = df_complete[,c("gender", matchVars)], report = c("adj.means", "std.diffs"))
+plot(balTabAorta)
+print(balTabValve, digits = 1)
+df_complete$groupAorta <- matchAortapm
+```
+
+```{r}
+fitAortapre <- lm(rfhemoglobin ~ ., data = df_complete[,c("gender", "rfhemoglobin", matchVars)], weights = df_complete$matchAortapm)
+coeftest(fitAortapre, vcov = sandwich)
+coefci(fitAortapre, vcov = sandwich)
+```
+
+```{r}
+fitAortapost <- lm(postophemoglobin ~ ., data = df_complete[,c("gender", "postophemoglobin", matchVars)], weights = df_complete$matchAortapm)
+coeftest(fitAortapost, vcov = sandwich)
+coefci(fitAortapost, vcov = sandwich)
+```
+
+##################################################
+#### Adding two more matching variables 05/01/2022
+## All patients
+```{r}
+print(CreateTableOne(vars = c("rfhemoglobin", "postophemoglobin"), strata = "gender", data = df_complete), smd = T)
+```
+
+```{r}
+psm_all <- glm(gender ~ ., data = df_complete[,c("gender", matchVars2)], family = binomial)
+matchAll <- match_on(gender ~ scores(psm_all), data = df_complete[,c("gender", matchVars2)])
+matchAllpm <- pairmatch(matchAll, caliper = 1, data = df_complete[,c("gender", matchVars2)])
+balTabAll <- xBalance(gender ~ .+strata(matchAllpm), data = df_complete[,c("gender", matchVars2)], report = c("adj.means", "std.diffs"))
+plot(balTabAll)
+print(balTabAll, digits = 1)
+df_complete$groupAll <- matchAllpm
+```
+
+```{r}
+fitAllpre <- lm(rfhemoglobin ~ ., data = df_complete[,c("gender", "rfhemoglobin", matchVars)], weights = df_complete$matchAllpm)
+coeftest(fitAllpre, vcov = sandwich)
+coefci(fitAllpre, vcov = sandwich)
+```
+
+```{r}
+fitAllpost <- lm(postophemoglobin ~ ., data = df_complete[,c("gender", "postophemoglobin", matchVars)], weights = df_complete$matchAllpm)
+coeftest(fitAllpost, vcov = sandwich)
+coefci(fitAllpost, vcov = sandwich)
+```
+
+## CABG Patients
+```{r}
+df_complete <- df[complete.cases(df[,matchVars])&df$cabg == 1, c("gender", "rfhemoglobin", "postophemoglobin", "lwst_hgb",  matchVars)]
+df_complete$gender <- ifelse(df_complete$gender == 1, 1, 0)
+```
+
+```{r}
+print(CreateTableOne(vars = c("rfhemoglobin", "postophemoglobin"), strata = "gender", data = df_complete), smd = T)
+```
+
+```{r}
+psm_cabg <- glm(gender ~ ., data = df_complete[, c("gender", matchVars2)], family = binomial)
+matchCabg <- match_on(gender ~ scores(psm_cabg), data = df_complete[,c("gender", matchVars2)])
+matchCabgpm <- pairmatch(matchCabg, caliper = 1, data = df_complete[,c("gender", matchVars2)])
+balTabCabg <- xBalance(gender ~ .+strata(matchCabgpm), data = df_complete[,c("gender", matchVars2)], report = c("adj.means", "std.diffs"))
+plot(balTabCabg)
+print(balTabCabg, digits = 1)
+df_complete$groupCabg <- matchCabgpm
+```
+
+```{r}
+fitCabgpre <- lm(rfhemoglobin ~ ., data = df_complete[,c("gender", "rfhemoglobin", matchVars)], weights = df_complete$matchCabgpm)
+coeftest(fitCabgpre, vcov = sandwich)
+coefci(fitCabgpre, vcov = sandwich)
+```
+
+```{r}
+fitCabgpost <- lm(postophemoglobin ~ ., data = df_complete[,c("gender", "postophemoglobin", matchVars)], weights = df_complete$matchCabgpm)
+coeftest(fitCabgpost, vcov = sandwich)
+coefci(fitCabgpost, vcov = sandwich)
+```
+
+## Valve Patients
+```{r}
+df_complete <- df[complete.cases(df[,matchVars])&df$valve == 1, c("gender", "rfhemoglobin", "postophemoglobin",  matchVars)]
+df_complete$gender <- ifelse(df_complete$gender == 1, 1, 0)
+```
+
+```{r}
+print(CreateTableOne(vars = c("rfhemoglobin", "postophemoglobin"), strata = "gender", data = df_complete), smd = T)
+```
+
+```{r}
+psm_valve <- glm(gender ~ ., data = df_complete[, c("gender", matchVars2)], family = binomial)
+matchValve <- match_on(gender ~ scores(psm_valve), data = df_complete[,c("gender", matchVars2)])
+matchValvepm <- pairmatch(matchValve, caliper = 1, data = df_complete[,c("gender", matchVars2)])
+balTabValve <- xBalance(gender ~ .+strata(matchValvepm), data = df_complete[,c("gender", matchVars2)], report = c("adj.means", "std.diffs"))
+plot(balTabValve)
+print(balTabValve, digits = 1)
+df_complete$groupValve <- matchValvepm
+```
+
+```{r}
+fitValvepre <- lm(rfhemoglobin ~ ., data = df_complete[,c("gender", "rfhemoglobin", matchVars)], weights = df_complete$matchValvepm)
+coeftest(fitValvepre, vcov = sandwich)
+coefci(fitValvepre, vcov = sandwich)
+```
+
+```{r}
+fitValvepost <- lm(postophemoglobin ~ ., data = df_complete[,c("gender", "postophemoglobin", matchVars)], weights = df_complete$matchValvepm)
+coeftest(fitValvepost, vcov = sandwich)
+coefci(fitValvepost, vcov = sandwich)
+```
+
+## Aorta Patients
+```{r}
+df_complete <- df[complete.cases(df[,matchVars])&df$aorta == 1, c("gender", "rfhemoglobin", "postophemoglobin",  matchVars)]
+df_complete$gender <- ifelse(df_complete$gender == 1, 1, 0)
+```
+
+```{r}
+print(CreateTableOne(vars = c("rfhemoglobin", "postophemoglobin"), strata = "gender", data = df_complete), smd = T)
+```
+
+```{r}
+psm_aorta <- glm(gender ~ ., data = df_complete[, c("gender", matchVars2)], family = binomial)
+matchAorta <- match_on(gender ~ scores(psm_aorta), data = df_complete[,c("gender", matchVars2)])
+matchAortapm <- pairmatch(matchAorta, caliper = 1, data = df_complete[,c("gender", matchVars2)])
+balTabAorta <- xBalance(gender ~ .+strata(matchAortapm), data = df_complete[,c("gender", matchVars2)], report = c("adj.means", "std.diffs"))
+plot(balTabAorta)
+print(balTabValve, digits = 1)
+df_complete$groupAorta <- matchAortapm
+```
+
+```{r}
+fitAortapre <- lm(rfhemoglobin ~ ., data = df_complete[,c("gender", "rfhemoglobin", matchVars)], weights = df_complete$matchAortapm)
+coeftest(fitAortapre, vcov = sandwich)
+coefci(fitAortapre, vcov = sandwich)
+```
+
+```{r}
+fitAortapost <- lm(postophemoglobin ~ ., data = df_complete[,c("gender", "postophemoglobin", matchVars)], weights = df_complete$matchAortapm)
+coeftest(fitAortapost, vcov = sandwich)
+coefci(fitAortapost, vcov = sandwich)
+```
+
+## Compute all the medians and IQRs
+```{r}
+median(df[df$gender == 1,]$rfhemoglobin, na.rm = T)
+median(df[df$gender == 2,]$rfhemoglobin, na.rm = T)
+
+median(df[df$gender == 1&df$cabg==1,]$rfhemoglobin, na.rm = T)
+median(df[df$gender == 2&df$cabg==1,]$rfhemoglobin, na.rm = T)
+
+median(df[df$gender == 1&df$valve==1,]$rfhemoglobin, na.rm = T)
+median(df[df$gender == 2&df$valve==1,]$rfhemoglobin, na.rm = T)
+
+median(df[df$gender == 1&df$aorta==1,]$rfhemoglobin, na.rm = T)
+median(df[df$gender == 2&df$aorta==1,]$rfhemoglobin, na.rm = T)
+```
+
+```{r}
+summary(df[df$gender == 1,]$rfhemoglobin, na.rm = T)
+summary(df[df$gender == 2,]$rfhemoglobin, na.rm = T)
+
+summary(df[df$gender == 1&df$cabg==1,]$rfhemoglobin, na.rm = T)
+summary(df[df$gender == 2&df$cabg==1,]$rfhemoglobin, na.rm = T)
+
+summary(df[df$gender == 1&df$valve==1,]$rfhemoglobin, na.rm = T)
+summary(df[df$gender == 2&df$valve==1,]$rfhemoglobin, na.rm = T)
+
+summary(df[df$gender == 1&df$aorta==1,]$rfhemoglobin, na.rm = T)
+summary(df[df$gender == 2&df$aorta==1,]$rfhemoglobin, na.rm = T)
+```
+
+```{r}
+median(df[df$gender == 1,]$postophemoglobin, na.rm = T)
+median(df[df$gender == 2,]$postophemoglobin, na.rm = T)
+
+median(df[df$gender == 1&df$cabg==1,]$postophemoglobin, na.rm = T)
+median(df[df$gender == 2&df$cabg==1,]$postophemoglobin, na.rm = T)
+
+median(df[df$gender == 1&df$valve==1,]$postophemoglobin, na.rm = T)
+median(df[df$gender == 2&df$valve==1,]$postophemoglobin, na.rm = T)
+
+median(df[df$gender == 1&df$aorta==1,]$postophemoglobin, na.rm = T)
+median(df[df$gender == 2&df$aorta==1,]$postophemoglobin, na.rm = T)
+```
+
+```{r}
+summary(df[df$gender == 1,]$postophemoglobin, na.rm = T)
+summary(df[df$gender == 2,]$postophemoglobin, na.rm = T)
+
+summary(df[df$gender == 1&df$cabg==1,]$postophemoglobin, na.rm = T)
+summary(df[df$gender == 2&df$cabg==1,]$postophemoglobin, na.rm = T)
+
+summary(df[df$gender == 1&df$valve==1,]$postophemoglobin, na.rm = T)
+summary(df[df$gender == 2&df$valve==1,]$postophemoglobin, na.rm = T)
+
+summary(df[df$gender == 1&df$aorta==1,]$postophemoglobin, na.rm = T)
+summary(df[df$gender == 2&df$aorta==1,]$postophemoglobin, na.rm = T)
+```
+
+```{r}
+median(dona_trim[dona_trim$gender==1]$Hemoglobin)
+median(dona_trim[dona_trim$gender==2]$Hemoglobin)
+
+summary(dona_trim[dona_trim$gender==1]$Hemoglobin)
+summary(dona_trim[dona_trim$gender==2]$Hemoglobin)
+```
+
+# Investigate endovascular operation
+
+```{r}
+table(df_sts$gender, df_sts$opapp)
+```
+
+```{r}
+df_sts_endo <- df_sts[df_sts$opapp == 15,]
+df_cabg_clean <- df[!df$medrecn %in% df_sts_endo$medrecn & df$cabg==1,]
+
+df_sts_endo$bldever <- ifelse(df_sts_endo$ibldprod==1|df_sts_endo$bldprod==1, 1,0)
+df_cabg_clean$bldever <- ifelse(df_cabg_clean$ibldprod==1|df_cabg_clean$bldprod==1, 1,0)
+
+summary(as.factor(df_sts_endo$gender))
+summary(as.factor(df_cabg_clean$gender))
+
+table(df_sts_endo$gender, df_sts_endo$bldever)
+table(df_cabg_clean$gender, df_cabg_clean$bldever)
+```
+
+# Additional figure from the blood transfusion RCT
+# 1. Load data
+```{r}
+df <- read.csv("bloodTransfusionMergedSet_09222021.csv") # n = 5457
+```
+
+##########################################################
+##########################################################
+# 2. Compute hgb % when receiving transfusion. 
+## We only have preoperative hgb, the entire record of postop hgb, but not intraop hgb. Hence, this following ratio is only useful for postop transfusion.
+```{r}
+df$postOpHgb_per <- df$lwst_hgb / df$rfhemoglobin # take a ratio of the lowest postop hgb and the preop (baseline) hgb. 
+```
+
+```{r}
+df_post <- df[df$bldprod==1&df$bdrbcu>0&df$postOpHgb_per<1&df$postOpHgb_per>0.05,]
+summary(df_post$gender %>% as.factor())
+```
+
+```{r}
+summary(df_post[df_post$gender==1,]$postOpHgb_per)
+summary(df_post[df_post$gender==2,]$postOpHgb_per)
+
+summary(df_post[df_post$gender==1&df_post$cabg==1,]$postOpHgb_per)
+summary(df_post[df_post$gender==2&df_post$cabg==1,]$postOpHgb_per)
+
+summary(df_post[df_post$gender==1&df_post$valve==1,]$postOpHgb_per)
+summary(df_post[df_post$gender==2&df_post$valve==1,]$postOpHgb_per)
+
+summary(df_post[df_post$gender==1&df_post$aorta==1,]$postOpHgb_per)
+summary(df_post[df_post$gender==2&df_post$aorta==1,]$postOpHgb_per)
+```
+
+## Race
+```{r}
+summary(df_post[df_post$gender==1&df_post$race==1,]$postOpHgb_per)
+summary(df_post[df_post$gender==1&df_post$race==2,]$postOpHgb_per)
+
+summary(df_post[df_post$gender==2&df_post$race==1,]$postOpHgb_per)
+summary(df_post[df_post$gender==2&df_post$race==2,]$postOpHgb_per)
+```
+
+## Lung
+```{r}
+summary(df_post[df_post$gender==1&df_post$chrlungd==1,]$postOpHgb_per)
+summary(df_post[df_post$gender==1&df_post$chrlungd==0,]$postOpHgb_per)
+
+summary(df_post[df_post$gender==2&df_post$chrlungd==1,]$postOpHgb_per)
+summary(df_post[df_post$gender==2&df_post$chrlungd==0,]$postOpHgb_per)
+```
+
+## Diabetes
+```{r}
+summary(df_post[df_post$gender==1&df_post$diabetes==1,]$postOpHgb_per)
+summary(df_post[df_post$gender==1&df_post$diabetes==2,]$postOpHgb_per)
+
+summary(df_post[df_post$gender==2&df_post$diabetes==1,]$postOpHgb_per)
+summary(df_post[df_post$gender==2&df_post$diabetes==2,]$postOpHgb_per)
+```
+
+## CVD
+```{r}
+summary(df_post[df_post$gender==1&df_post$cvd==1,]$postOpHgb_per)
+summary(df_post[df_post$gender==1&df_post$cvd==2,]$postOpHgb_per)
+
+summary(df_post[df_post$gender==2&df_post$diabetes==1,]$postOpHgb_per)
+summary(df_post[df_post$gender==2&df_post$diabetes==2,]$postOpHgb_per)
+```
+
+## PVD
+```{r}
+summary(df_post[df_post$gender==1&df_post$pvd==1,]$postOpHgb_per)
+summary(df_post[df_post$gender==1&df_post$pvd==2,]$postOpHgb_per)
+
+summary(df_post[df_post$gender==2&df_post$pvd==1,]$postOpHgb_per)
+summary(df_post[df_post$gender==2&df_post$pvd==2,]$postOpHgb_per)
+```
+
+## Hypertension
+```{r}
+summary(df_post[df_post$gender==1&df_post$hypertn==1,]$postOpHgb_per)
+summary(df_post[df_post$gender==1&df_post$hypertn==2,]$postOpHgb_per)
+
+summary(df_post[df_post$gender==2&df_post$hypertn==1,]$postOpHgb_per)
+summary(df_post[df_post$gender==2&df_post$hypertn==2,]$postOpHgb_per)
+```
+
+
+## 2.1 summarize by sex and plot the histogram by sex
+```{r}
+summary(df_post[df_post$gender==1&df_post$postOpHgb_per<1,]$postOpHgb_per)
+summary(df_post[df_post$gender==2&df_post$postOpHgb_per<1,]$postOpHgb_per)
+
+```
+
+```{r}
+ggplot(df_post, aes(x = postOpHgb_per, color = as.factor(gender), fill = as.factor(gender))) + geom_histogram(binwidth = .02, color = "#e9ecef", alpha = 0.7, position = "dodge") + scale_fill_manual(values = c("#69b3a2", "#404080"), name = "Sex", labels = c("Male", "Female")) + scale_color_manual(values = c("#69b3a2", "#404080"), name = "Sex", labels = c("Male", "Female")) + geom_density(aes(y = ..count../40),alpha = 0.1) + guides(color = FALSE) + geom_vline(xintercept = median(df_post[df_post$gender==1,]$postOpHgb_per, na.rm = T), linetype = "dashed", color = "#69b3a2") + geom_vline(xintercept = median(df_post[df_post$gender==2,]$postOpHgb_per, na.rm = T), linetype = "dashed", color = "#404080") + ggtitle("Transfusion Threshold Viewed as Percent of Baseline HGBs (HGB Tranfusion Ratio)") + theme_classic() + xlim(0.2, 1.2) + xlab("Percent of Baseline HGB") + ylab("Counts")
+
+ggsave(filename = "bloodTrasfusion_Figure1_percentHGBDist_byGender.jpeg", device='tiff', dpi=700)
+
+percent_gender <- ggplot(df_post, aes(x = postOpHgb_per, color = as.factor(gender), fill = as.factor(gender))) + geom_histogram(binwidth = .02, color = "#e9ecef", alpha = 0.7, position = "dodge") + scale_fill_manual(values = c("#69b3a2", "#404080"), name = "Sex", labels = c("Male", "Female")) + scale_color_manual(values = c("#69b3a2", "#404080"), name = "Sex", labels = c("Male", "Female")) + geom_density(aes(y = ..count../40),alpha = 0.1) + guides(color = FALSE) + geom_vline(xintercept = median(df_post[df_post$gender==1,]$postOpHgb_per, na.rm = T), linetype = "dashed", color = "#69b3a2") + geom_vline(xintercept = median(df_post[df_post$gender==2,]$postOpHgb_per, na.rm = T), linetype = "dashed", color = "#404080") + ggtitle("Transfusion Threshold Viewed as Percent of Baseline HGBs (HGB Tranfusion Ratio)") + theme_classic() + xlim(0.2, 1.2) + xlab("Percent of Baseline HGB") + ylab("Counts")
+```
+
+
+# Construct Figure 1
+```{r}
+plot_grid(donor_gender, g_all, g_cabg, g_valve, g_aorta, percent_gender, labels = c("A", "B", "C", "D", "E", "F"), ncol = 2) 
+ 
+```
+
+
+# Construct Figure 2
+```{r}
+mfd <- plot_grid(md, fd, ncol = 2)
+plot_grid(percent_gender, mfd, labels = c("A", "B"), ncol = 1)
+```
+
+

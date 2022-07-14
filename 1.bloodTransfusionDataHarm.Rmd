@@ -1,0 +1,337 @@
+---
+title: "BloodTransfusionDataHarm"
+author: "Yan Min"
+date: "8/6/2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+setwd("~/Documents/CardioThoracicSurgeryResearch/BloodTransfusion")
+```
+
+# Load packages
+```{r}
+pkgs <- c("dplyr", "ggplot2", "tableone", "tidyr", "data.table")
+sapply(pkgs, require, character.only = T)
+```
+
+# Extract the lowest postoperative hemoglobin
+```{r}
+cbc1 <- read.csv("AllCBCdata.csv", check.names = F) # cbc data for the 700 root surgeries
+cbc1$surgdt <- cbc1$or_date
+cbc1$or_date <- NULL
+cbc2 <- read.csv("dalal_fiscbein_aortic_root_cohort_upd20210818.csv") # cbc data for all stanford sts cohort
+cbc <- rbind(cbc1, cbc2) %>% as.data.frame()
+remove(cbc1)
+remove(cbc2)
+
+cbc$ord_value <- cbc$ord_value %>% as.character() %>% as.numeric()
+cbc_hgb <- cbc[cbc$lab_name == "Hemoglobin"&cbc$timing == "postop",]
+# Seperate the blood taken date and time
+cbc_hgb$taken_time <- as.character(cbc_hgb$taken_time)
+cbc_hgb$taken_time <- as.POSIXct(cbc_hgb$taken_time, format="%m/%d/%y %H:%M")
+cbc_hgb <- cbc_hgb[!duplicated(cbc_hgb$taken_time),]
+mrns <- unique(cbc_hgb$mrn)
+
+# Create the dataset of the lowest hgb level
+cbc_lwst_hgb <- matrix(nrow = length(mrns), ncol = 2)
+for(i in 1:length(mrns)){
+  mrn <- mrns[i]
+  sub <- cbc_hgb[cbc_hgb$mrn == mrn, ]
+  lwst_hgb <- min(sub$ord_value)
+  cbc_lwst_hgb[i,] <- c(mrn, lwst_hgb)
+  remove(sub)
+}
+cbc_lwst_hgb <- as.data.frame(cbc_lwst_hgb)
+colnames(cbc_lwst_hgb) <- c("mrn", "lwst_hgb")
+
+#write.csv(cbc_lwst_hgb, file = "cbc_lwst_hgb_08202021.csv")
+
+# Create the dataset of the first postoperative hgb level
+cbc_fst_hgb <- matrix(nrow = length(mrns), ncol = 2)
+for(i in 1:length(mrns)){
+  mrn <- mrns[i]
+  sub <- cbc_hgb[cbc_hgb$mrn == mrn, ]
+  fst_hgb <- sub[sub$taken_time == min(sub$taken_time),]$ord_value
+  cbc_fst_hgb[i,] <- c(mrn, fst_hgb)
+  remove(sub)
+}
+cbc_fst_hgb <- as.data.frame(cbc_fst_hgb)
+colnames(cbc_fst_hgb) <- c("mrn", "first_postophgb")
+
+#write.csv(cbc_fst_hgb, file = "cbc_fst_postophgb_08202021.csv")
+```
+
+```{r}
+mrn <- mrns[3]
+  sub <- cbc_hgb[cbc_hgb$mrn == mrn, ]
+  fst_hgb <- sub[sub$taken_time == min(sub$taken_time),]$ord_value
+  cbc_fst_hgb[i,] <- c(mrn, fst_hgb)
+  remove(sub)
+```
+
+# Load the two datasets
+```{r}
+df1 <- read.csv("All_roots_data08_04_21.csv") # stanford data 
+df2 <- read.csv("STS_data_03282014_12312020.csv") # stanford data submit to STS 2014 - 2020
+df3 <- read.csv("CompleteAorticRootSu-20142020RootData_DATA_2021-08-18_1812.csv") # stanford root 2014-2020
+vartab <- read.csv("v2.9_var.csv")
+
+# df1 and df3 are the same variables, rbind the two, remove duplicated records
+
+df1$redcap_data_access_group <- NULL # remove this variable that does not exist in df3
+df1 <- rbind(df1[!df1$mrn %in% df3$mrn,], df3) %>% as.data.frame()
+```
+
+# Subset variables and make 
+```{r}
+conVars <- vartab[vartab$stanford_dataset_varnames == "consistent" & !is.na(vartab$stanford_dataset_varnames),]$variable %>% as.character() 
+nonVars <- vartab[vartab$stanford_dataset_varnames == "NA",]$variable %>% as.character() 
+harmVars <- vartab[!is.na(vartab$stanford_dataset_varnames) & vartab$stanford_dataset_varnames != "consistent",]$stanford_dataset_varnames %>% as.character()
+newVarNames <- vartab[vartab$stanford_dataset_varnames %in% harmVars,]$variable %>% as.character()
+```
+
+# Harmonize variables (make stanford data look like the sts data)
+```{r}
+# diabetes
+df1$diabetes_hx[df1$diabetes_hx == 0] <- 2
+df1$diabetes_hx[is.na(df1$diabetes_hx)] <- 3
+
+# dislipidemia
+df1$hld[df1$hld == 0] <- 2
+df1$hld[is.na(df1$hld)] <- 3
+
+# hypertension
+df1$htn[df1$htn == 0] <- 2
+df1$htn[is.na(df1$htn)] <- 3
+
+# endocarditis 
+df1$endocarditis[df1$endocarditis == 0] <- 2
+df1$endocarditis[is.na(df1$endocarditis)] <- 3
+
+# chronic lung disease, make sts binary look like stanford data
+df2$chrlungd[df2$chrlungd == 1] <- 0
+df2$chrlungd[df2$chrlungd !=0 & !is.na(df2$chrlungd)] <- 1
+df2$chrlungd[df2$chrlungd == 0] <- 2
+df2$chrlungd[is.na(df2$chrlungd)] <- 3
+df1$lung_dz_hx[df1$lung_dz_hx == 0] <- 2
+df1$lung_dz_hx[is.na(df1$lung_dz_hx)] <- 3
+
+# pvd 
+df1$pad[df1$pad == 0] <- 2
+df1$pad[is.na(df1$pad)] <- 3
+
+# aortic disease
+df1$type_a[df1$type_a == 0] <- 2
+df1$type_a[is.na(df1$type_a)] <- 3
+
+# CVD 
+df1$hx_cva[df1$hx_cva == 0] <- 2
+df1$hx_cva[is.na(df1$hx_cva)] <- 3
+
+# aortic insufficiency
+df1$aortic_insufficiency <- df1$aortic_insufficiency - 1
+df1$aortic_insufficiency[is.na(df1$aortic_insufficiency)] <- 5
+
+# aortic stenosis
+df1$aortic_stenosis[df1$aortic_stenosis == 99] <- NA
+df1$aortic_stenosis[df1$aortic_stenosis != 98 & !is.na(df1$aortic_stenosis)] <- 1
+df1$aortic_stenosis[df1$aortic_stenosis == 98] <- 2
+
+# genetic connective tissue disease
+df1$ctd_hx[df1$ctd_hx == 1] <- 8
+df1$ctd_hx[df1$ctd_hx == 2] <- 1
+df1$ctd_hx[df1$ctd_hx == 99] <- 7
+
+# prior aortic surgery
+df1$aortic_surg_hx <- 2
+df1$aortic_surg_hx[df1$aortic_surg_hx___1 == 1 | df1$aortic_surg_hx___2 == 1 | df1$aortic_surg_hx___3 == 1 | df1$aortic_surg_hx___4 == 1] <- 1
+
+# circ arrest
+df1$circ_arrest[df1$circ_arrest == 0] <- 2
+
+# long ventilation > 24 hrs
+df1$long_vent[df1$long_vent == 0] <- 2
+
+# transient stroke
+df1$cnstrokttia[df1$cnstrokttia == 0] <- 2
+
+# new dialysis
+df1$hd[df1$hd == 0] <- 2
+
+# decrease date, modify the sts format in this case, from mm/dd/yyyy to yyyy-mm-dd
+df2$mtdate <- as.Date(df2$mtdate, "%m/%d/%Y")
+df2$dob <- as.Date(df2$dob, "%m/%d/%Y")
+df2$dischdt <- as.Date(df2$dischdt, "%m/%d/%Y")
+
+
+# create 2 holder variables 
+df1$mt30stat <- NA
+df1$dischdt <- NA
+
+# recode sex
+df1$male[df1$male == 0] <- 2 
+
+# make one categorical race variable
+df1$race <- NA
+df1$race[df1$racecaucasian == 1] <- 1
+df1$race[df1$raceblack == 1] <- 2
+df1$race[df1$raceasian == 1] <- 3
+df1$race[df1$racenativeam == 1] <- 4
+df1$race[df1$racnativepacific == 1] <- 5
+df1$race[df1$raceother == 1] <- 6
+
+df2$race <- NA
+df2$race[df2$racecaucasian == 1] <- 1
+df2$race[df2$raceblack == 1] <- 2
+df2$race[df2$raceasian == 1] <- 3
+df2$race[df2$racenativeam == 1] <- 4
+df2$race[df2$racnativepacific == 1] <- 5
+df2$race[df2$raceother == 1] <- 6
+
+# generate placeholder variable in df1 for transfusion protocol
+df1$transfalg <- NA
+
+df1$creatlst <- NA
+df1$postcreat <- NA
+```
+
+# Change variable names
+```{r}
+setnames(df1, old = harmVars, new = newVarNames)
+```
+
+# Generate procedure code for the datasets
+```{r}
+df1$aorta <- 1
+df1$cabg <- 0
+df1$valve <- 0
+df1$other <- 0
+df1$afib <- 0
+df1$noncard <- 0
+
+df2$aorta <- ifelse(df2$aortproc == 2, 0, 1)
+df2$cabg <- ifelse(df2$opcab == 2, 0, 1)
+df2$valve <- ifelse(df2$opvalve == 1, 1, 0)
+df2$other <- ifelse(df2$opocard == 2, 0, 1)
+df2$afib <- ifelse(df2$afibproc == 1, 1, 0)
+df2$noncard <- ifelse(df2$oponcard == 1, 1, 0)
+```
+
+# Merge the two dataset
+```{r}
+# Harmonize the rest of the dates
+dateVars <- c("dob", "surgdt", "dischdt", "mtdate")
+numVars <- c(newVarNames[!newVarNames %in% c(dateVars, "medrecn", "gender")], conVars[!conVars %in% dateVars])
+
+df1[,dateVars] <- lapply(df1[,dateVars], as.Date)
+df2[,dateVars] <- lapply(df2[,dateVars], as.Date)
+
+# Generate 30-day mortality variable for the stanford data
+df1$mt30stat <- ifelse(lubridate::time_length(difftime(df1$surgdt, df1$dob), "years") <= 30, 2, 1)
+
+# Generate death before discharge
+df2$operative_mortality <- ifelse(df2$mtdate < df2$dischdt, 1, 0)
+
+# Generate the final mortality outcome variable
+df1$opMort <- ifelse(df1$operative_mortality == 1 | df1$mt30stat == 2, 1, 0)
+df2$opMort <- ifelse(df2$operative_mortality == 1 | df2$mt30stat == 2, 1, 0)
+
+addedVars <- c("aorta", "cabg", "valve", "other", "afib", "noncard", "opMort", "race")
+
+# Harmonize the factor variables
+df1[,c("postophemoglobin", "postophct")] <- lapply(df1[,c("postophemoglobin", "postophct")], function(x) as.numeric(as.character(x)))
+df2[,c("postophemoglobin", "postophct")] <- lapply(df2[,c("postophemoglobin", "postophct")], function(x) as.numeric(as.character(x)))
+
+# Remove the patients from stanford data that are already in sts
+df <- rbind(df1[!df1$medrecn %in% df2$medrecn,c(conVars, newVarNames, addedVars)], df2[,c(conVars, newVarNames, addedVars)]) %>% as.data.frame()
+```
+
+# Duplicated record choose the most recent operation (There are 175 duplcated record)
+```{r}
+mrn_dup <- df$medrecn[duplicated(df$medrecn)]
+
+df <- df[order(df$medrecn, df$surgdt, decreasing = T),]
+df <- df[!duplicated(df$medrecn),] # will keep the most recent dates
+```
+
+# Merge the lowest postoperative hgb
+```{r}
+cbc_lwst_hgb$medrecn <- cbc_lwst_hgb$mrn
+df <- merge(df, cbc_lwst_hgb, by = "medrecn")
+```
+
+# Merged added first postop hgb 08/26/2021
+```{r}
+df <- read.csv("bloodTransfusionMergedSet_08112021.csv", check.names = F)
+cbc_fst_hgb$medrecn <- cbc_fst_hgb$mrn
+df <- merge(df, cbc_fst_hgb, by = "medrecn")
+```
+
+## Compute eGFR
+```{r}
+df <- read.csv("bloodTransfusionMergedSet_0922021.csv", check.names = F)
+df$sex <- ifelse(df$gender == 2, 1, 0) # code women as 1 for easy computation
+df$black <- ifelse(df$race == 2, 1, 0) # code black as 1 for easy computation
+
+df_nas <- df[is.na(df$creatlst) | is.na(df$race),]
+df_nas$egfr <- NA
+
+df <- df[!df$medrecn %in% df_nas$medrecn,] # remove records with missing values
+df$egfr <- 175 * (df$creatlst)^(-1.154) * (df$age)^(-0.203) # male nonblack
+df[df$sex==1&df$black==1,]$egfr <- df[df$sex==1&df$black==1,]$egfr*0.742*1.21
+df[df$sex==1&df$black==0,]$egfr <- df[df$sex==1&df$black==0,]$egfr*0.742
+df[df$sex==0&df$black==1,]$egfr <- df[df$sex==0&df$black==1,]$egfr*1.21
+
+df <- rbind(df, df_nas) %>% as.data.frame()
+
+df$egfrCat <- NA
+df$egfrCat[df$egfr>= 90] <- "Stage 1"
+df$egfrCat[df$egfr>= 60 & df$egfr <90] <- "Stage 2"
+df$egfrCat[df$egfr>= 45 & df$egfr <60] <- "Stage 3A"
+df$egfrCat[df$egfr>= 30 & df$egfr <45] <- "Stage 3B"
+df$egfrCat[df$egfr>= 15 & df$egfr <30] <- "Stage 4"
+df$egfrCat[df$egfr< 15] <- "Stage 5"
+df$egfrCat <- as.factor(df$egfrCat)
+```
+
+# Save the merged dataset
+```{r}
+write.csv(df, file = "bloodTransfusionMergedSet_09222021.csv", row.names = F)
+```
+
+# Variable request from other instutions
+```{r}
+vartab <- read.csv("v2.9_var.csv")
+
+# Must haves
+mustVars <- vartab[vartab$Needs == "yes",]$variable %>% as.character()
+goodToHaveVars <- vartab[vartab$Needs == "maybe",]$variable %>% as.character()
+
+write.csv(mustVars, file = "dataRequestMustHaveVars_08282021.csv", row.names = F)
+write.csv(goodToHaveVars, file = "dataRequestgoodToHaveVarsVars_08282021.csv", row.names = F)
+```
+
+# 10/06/2021 Add EJ
+```{r}
+df <- read.csv("bloodTransfusionMergedSet_09222021.csv")
+df_new <- read.csv("STS_data_03282014_12312020_10062021.csv")
+
+df <- merge(df, df_new[,c("medrecn", "prelvef")]) %>% as.data.frame()
+write.csv(df, file = "bloodTransfusionMergedSet_09222021.csv", row.names = F)
+```
+
+# 10/06/2021 Check columbia data
+```{r}
+library(readxl)
+df_c <- read_excel("TRACRequestA9.27.xlsx")
+```
+
+
+
+
+
+
+
+

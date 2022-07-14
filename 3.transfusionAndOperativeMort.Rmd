@@ -1,0 +1,341 @@
+---
+title: "3.transfusionAndOperativeMortality"
+author: "Yan Min"
+date: "1/24/2022"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+setwd("~/Documents/CardioThoracicSurgeryResearch/BloodTransfusion")
+```
+
+# Load packages
+```{r}
+pkgs <- c("dplyr", "ggplot2", "tableone", "tidyr", "cowplot", "gridExtra", "grid", "data.table", "lemon", "MatchIt", "optmatch", "sandwich", "broom", "rdrobust", "estimatr", "kableExtra", "modelsummary", "lmtest", "lme4", "ivtools", "tidyverse")
+sapply(pkgs, require, character.only = T)
+```
+
+# Load the data
+```{r}
+df <- read.csv("bloodTransfusionMergedSet_09222021.csv") # n = 5450
+
+df <- df[!is.na(df$prelvef),] # remove those without ejection rate
+
+# remove all the records that have na for preoperative hgb
+df <- df[!is.na(df$rfhemoglobin),] # n = 5429
+
+# remove records with NA gender
+df <- df[!is.na(df$gender),]
+
+# recode binary variable from 1, 2 convention to 0, 1 convention
+recodeVars <- c("bldprod","ibldprod", "intraopprocomcon", "imedeaca", "imedtran", "bldprod", "infendo", "chrlungd", "vdstena", "circarr", "cpvntlng", "cnstrokttia", "crendial")
+
+df <- df %>% mutate_at(recodeVars, funs(recode(., '2' = 0, '1' = 1, .default = NaN)))
+
+# correct all the opMort NAs to 0, however, this might end up underestimating. 
+df$opMort[is.na(df$opMort)] <- 0
+
+matchVars <- c("age", "race","diabetes", "classnyh", "dyslip", "hypertn", "infendo", "chrlungd", "pvd", "thaodisease", "cvd", "vdinsufa", "creatlst", "egfr",  "status", "prelvef") 
+```
+
+```{r}
+#df_big <- read.csv("STS_data_v2.81_v4.2_10_26.csv")
+#add_vars <- c("medrecn", "crendial", "cnstrokttia", "cnstrokp") # new requirement for dialysis, transient ischemic attack, stroke, 
+#df_big_sub <- df_big[df_big$medrecn %in% df$medrecn,add_vars]
+#df <- merge(df, df_big_sub, by = "medrecn", all.x = T, no.dups = T)
+#df <- df %>% distinct(medrecn, .keep_all = T)
+df$outcome <- 0 
+#df$outcome[df$opMort==1|df$crendial==1|df$cnstrokp==1|df$cnstrokp==1] <- 1
+df$outcome[df$opMort==1|df$cnstrokp==1|df$cnstrokp==1] <- 1
+
+df$outcome <- as.factor(df$outcome)
+```
+
+```{r}
+df$postStroke <- 0
+df$postStroke[df$cnstrokp == 1] <- 1
+df$postAttack <- 0
+df$postAttack[df$cnstrokttia == 1] <- 1
+tab1_outcome <- CreateTableOne(c("crendial", "postAttack", "postStroke"), strata = "gender", data = df, factorVars = c("crendial", "postAttack", "postStroke"))
+print(tab1_outcome, smd = T, test = F)
+```
+
+####################################################
+# First conduct fuzzy regression discontinuity in men whom received post-operative tranfusion, using 7.5 as the cutoff, +1 -1 as the width
+```{r}
+dfm <- df[df$gender==1 &!is.na(df$lwst_hgb)&complete.cases(df[,matchVars]),]
+psm <- glm(bldprod ~ ., data = dfm[, c("bldprod", matchVars)], family = binomial)
+dfm$propen <- psm$fitted.values
+#dfm <- dfm[dfm$ibldprod == 0,]
+
+dfm_center <- dfm %>% mutate(hgb_centered = lwst_hgb - 7.5)
+dfm_center$below_cutoff <- ifelse(dfm_center$hgb_centered<=0, 1, 0)
+dfm_filt <- filter(dfm_center,hgb_centered >= -1 & hgb_centered <= 1)
+```
+
+```{r}
+dfm_tem <- dfm
+dfm_tem$cutoff <- ifelse(dfm_tem$lwst_hgb<7.5, 1, 0)
+tab1_dfm_tem <- CreateTableOne(matchVars, strata = "cutoff", data = dfm_tem, factorVars = matchVars[c(2:12, 15)])
+print(tab1_dfm_tem, smd = T, test = F, pDigits = 2, catDigits = 1, contDigits = 1)
+```
+
+# Use IV robust with window width as 1
+```{r}
+fitm_x.lz <- glm(bldprod ~ hgb_centered + propen, data = dfm_filt, family = binomial)
+summary(fitm_x.lz)
+fitm_y.lx <- glm(opMort~ bldprod + propen, data = dfm_filt, family = binomial)
+summary(fitm_y.lx)
+fitm_iv <- ivglm("ts", fitX.LZ = fitm_x.lz, fitY.LX = fitm_y.lx, data = dfm_filt, ctrl = T)
+summary(fitm_iv)
+```
+
+# try the composite outcome
+```{r}
+fitm_x.lz <- glm(bldprod ~ hgb_centered + propen, data = dfm_filt, family = binomial)
+summary(fitm_x.lz)
+fitm_y.lx <- glm(outcome~ bldprod + propen, data = dfm_filt, family = binomial)
+summary(fitm_y.lx)
+fitm_iv <- ivglm("ts", fitX.LZ = fitm_x.lz, fitY.LX = fitm_y.lx, data = dfm_filt, ctrl = T)
+summary(fitm_iv)
+```
+
+```{r}
+exp(1.16)
+exp(confint(fitm_iv))
+```
+
+# Now conduct fuzzy regression discontinuity in women
+```{r}
+dff <- df[df$gender==2 & !is.na(df$lwst_hgb) & complete.cases(df[,matchVars]),]
+psf <- glm(bldprod ~ ., data = dff[, c("bldprod", matchVars)], family = binomial)
+dff$propen <- psf$fitted.values
+#dff <- dff[dff$ibldprod == 0,]
+
+dff_center <- dff %>% mutate(hgb_centered = lwst_hgb - 7.5) # below_cutoff is the instrument here
+dff_center$below_cutoff <- ifelse(dff_center$hgb_centered <= 0, 1, 0)
+dff_filt <- filter(dff_center, hgb_centered >= -1 & hgb_centered <= 1)
+```
+
+```{r}
+dff_tem <- dff
+dff_tem$cutoff <- ifelse(dff_tem$lwst_hgb<7.5, 1, 0)
+tab1_dff_tem <- CreateTableOne(matchVars, strata = "cutoff", data = dff_tem, factorVars = matchVars[c(2:12, 15)])
+print(tab1_dff_tem, smd = T, test = F, pDigits = 2, catDigits = 1, contDigits = 1)
+```
+
+```{r}
+fitf_x.lz <- glm(bldprod ~ hgb_centered + propen, data = dff_filt, family = binomial)
+summary(fitf_x.lz)
+exp(confint(fitf_x.lz))
+fitf_y.lx <- glm(opMort~bldprod + propen, data = dff_filt, family = binomial)
+summary(fitf_y.lx)
+fitf_iv <- ivglm("ts", fitX.LZ = fitf_x.lz, fitY.LX = fitf_y.lx, data = dff_filt, ctrl = T)
+summary(fitf_iv)
+```
+
+# now try the composite outcome
+```{r}
+fitf_x.lz <- glm(bldprod ~ hgb_centered + propen, data = dff_filt, family = binomial)
+summary(fitf_x.lz)
+exp(confint(fitf_x.lz))
+fitf_y.lx <- glm(outcome~bldprod + propen, data = dff_filt, family = binomial)
+summary(fitf_y.lx)
+fitf_iv <- ivglm("ts", fitX.LZ = fitf_x.lz, fitY.LX = fitf_y.lx, data = dff_filt, ctrl = T)
+summary(fitf_iv)
+```
+
+```{r}
+exp(2.46)
+exp(confint(fitf_iv))
+```
+
+####################################################
+# Now conduct fuzzy regression discontinuity in men whom only received post-operative tranfusion, using 7.5 as the cutoff, +1 -1 as the width
+```{r}
+dfm <- df[df$gender==1 &!is.na(df$lwst_hgb)&complete.cases(df[,matchVars]),]
+psm <- glm(bldprod ~ ., data = dfm[, c("bldprod", matchVars)], family = binomial)
+dfm$propen <- psm$fitted.values
+dfm <- dfm[dfm$ibldprod == 0,]
+
+dfm_center <- dfm %>% mutate(hgb_centered = lwst_hgb - 7.5)
+dfm_center$below_cutoff <- ifelse(dfm_center$hgb_centered<=0, 1, 0)
+dfm_filt <- filter(dfm_center,hgb_centered >= -1 & hgb_centered <= 1)
+```
+
+## First oberve using 7.5 as the cutoff, what is the count and percentages of compliance with men
+```{r}
+dfm_filt %>% group_by(bldprod, lwst_hgb<= 7.5) %>% 
+  summarize(count = n()) %>%
+  group_by(bldprod) %>%
+  mutate(prop = count / sum(count))
+
+dfm_filt %>% group_by(bldprod,opMort== 1) %>% 
+  summarize(count = n()) %>%
+  group_by(bldprod) %>%
+  mutate(prop = count / sum(count))
+```
+
+# Use IV robust with window width as 1
+```{r}
+fitm_x.lz <- glm(bldprod ~ hgb_centered + propen, data = dfm_filt, family = binomial)
+exp(fitm_x.lz$coefficients)
+exp(confint(fitm_x.lz))
+fitm_y.lx <- glm(opMort~ bldprod + propen, data = dfm_filt, family = binomial)
+fitm_iv <- ivglm("ts", fitX.LZ = fitm_x.lz, fitY.LX = fitm_y.lx, data = dfm_filt, ctrl = T)
+summary(fitm_iv)
+exp(-1.292)
+confint(fitm_iv) %>% exp
+```
+
+```{r}
+table(dfm_filt$opMort, dfm_filt$below_cutoff)
+table(dfm_filt$opMort, dfm_filt$bldprod)
+table(dfm_filt$below_cutoff, dfm_filt$bldprod)
+```
+
+#############################################################
+# Now conduct fuzzy regression discontinuity in women
+```{r}
+dff <- df[df$gender==2 & !is.na(df$lwst_hgb) & complete.cases(df[,matchVars]),]
+psf <- glm(bldprod ~ ., data = dff[, c("bldprod", matchVars)], family = binomial)
+dff$propen <- psf$fitted.values
+dff <- dff[dff$ibldprod == 0,]
+
+dff_center <- dff %>% mutate(hgb_centered = lwst_hgb - 7.5) # below_cutoff is the instrument here
+dff_center$below_cutoff <- ifelse(dff_center$hgb_centered <= 0, 1, 0)
+dff_filt <- filter(dff_center, hgb_centered >= -1 & hgb_centered <= 1)
+```
+
+```{r}
+dff_filt %>% group_by(bldprod, lwst_hgb<= 7.5) %>% 
+  summarize(count = n()) %>%
+  group_by(bldprod) %>%
+  mutate(prop = count / sum(count))
+
+dff_filt %>% group_by(bldprod, opMort == 1) %>% 
+  summarize(count = n()) %>%
+  group_by(bldprod) %>%
+  mutate(prop = count / sum(count))
+```
+
+```{r}
+fitf_x.lz <- glm(bldprod ~ hgb_centered + propen, data = dff_filt, family = binomial)
+exp(fitf_x.lz$coefficients)
+exp(confint(fitf_x.lz))
+fitf_y.lx <- glm(opMort~bldprod + propen, data = dff_filt, family = binomial)
+fitf_iv <- ivglm("ts", fitX.LZ = fitf_x.lz, fitY.LX = fitf_y.lx, data = dff_filt, ctrl = T)
+summary(fitf_iv)
+exp(1.595)
+confint(fitf_iv) %>% exp
+```
+
+```{r}
+table(dff_filt$opMort, dff_filt$below_cutoff)
+table(dff_filt$opMort, dff_filt$bldprod)
+table(dff_filt$below_cutoff, dff_filt$bldprod)
+```
+
+#############################################################33
+# sensitivity analysis
+
+## Write a function to repeat the above tests
+```{r}
+ivmodel <- function(df, center, width){
+  
+  center <- as.numeric(center)
+  width <- as.numeric(width)
+  
+  df_center <- df %>% mutate(hgb_centered = lwst_hgb - center) # below_cutoff is the instrument here
+  df_filt <- filter(df_center, df_center$ibldprod==0 & hgb_centered >= -width & hgb_centered <= width)
+  
+  fit_x.lz <- glm(bldprod ~ hgb_centered + propen, data = df_filt, family = binomial)
+  fit_y.lx <- glm(outcome~bldprod + propen, data = df_filt, family = binomial)
+  fit_iv <- ivglm("ts", fitX.LZ = fit_x.lz, fitY.LX = fit_y.lx, data = df_filt, ctrl = T)
+  return(summary(fit_iv))
+}
+```
+
+## Testing different centers 
+```{r}
+ivmodel(dfm, 6, 1)
+ivmodel(dfm, 6.5, 1)
+ivmodel(dfm, 7, 1)
+#ivmodel(dfm, 7.5, 1)
+ivmodel(dfm, 8, 1)
+```
+
+```{r}
+ivmodel(dff, 6, 1)
+ivmodel(dff, 6.5, 1)
+ivmodel(dff, 7, 1)
+#ivmodel(dff, 7.5,1)
+ivmodel(dff, 8, 1)
+```
+
+## Testing different widths
+```{r}
+ivmodel(dfm, 6, 0.5)
+ivmodel(dfm, 6.5, 0.5)
+ivmodel(dfm, 7, 0.5)
+ivmodel(dfm, 8, 0.5)
+```
+
+
+```{r}
+#ivmodel(dff, 6, 0.5)
+ivmodel(dff, 6.5, 0.5)
+ivmodel(dff, 7, 0.5)
+ivmodel(dff, 8, 0.5)
+```
+
+
+
+
+# Examinine baseline hemologbin as an instrument by sex
+```{r}
+df_male <- df[df$gender==1,]
+df_fem <- df[df$gender==2,]
+```
+
+```{r}
+df_male$hgb_tert <- cut(df_male$rfhemoglobin, breaks = c(5.7,13.1,14.6,19))
+df_fem$hgb_tert <- cut(df_fem$rfhemoglobin, breaks = c(6.3,11.9,13.3,17.5))
+```
+
+## Create table 1
+```{r}
+allVars <- names(df_male)
+excludeVars <- c("medrecn", "mrn", "dob", "surgdt", "dischdt", "mtdate", "patgenhist", "racecaucasian", "raceblack", "raceasian", "racenativeam", "racenativepacific", "raceother", "mt30stat", "racnativepacific", "dhcatm", "afib", "noncard", "prioraorta", "cperfutil", "cpvntlng", "cnstrokp", "cnstrokttia", "crendial", "opMort")
+contiVars <- c("rfhemoglobin", "hct", "platelets", "totalbumin", "dhcatm", "postophemoglobin", "postophct", "ibdrbcu", "ibdplatu", "ibdplatu", "ibdcryou", "bdrbcu", "bdffpu", "bdcryou", "bdplatu", "age", "heightcm", "weightkg", "lwsttemp", "ibdffpu", "xclamptm", "totcircarrtm", "lwst_hgb", "intraclotfact", "first_postophgb", "creatlst", "egfr", "prelvef")
+catVars <- allVars[!allVars %in% c(excludeVars, contiVars)]
+
+tableVars <- names(df_male)
+reordered_tableVars <- c("age", "hgb_tert", "race", "heightcm", "weightkg", "diabetes", "dyslip", "hypertn", "chrlungd", "infendo", "pvd", "thaodisease", "cvd", "classnyh", "prelvef", "creatlst", "egfr", "egfrCat", "vdinsufa", "vdstena", "status", "rfhemoglobin", "hct", "platelets", "totalbumin", "first_postophgb",  "lwst_hgb", "postophemoglobin", "postophct", "ibldprod", "ibdrbcu", "ibdffpu", "ibdplatu", "ibdcryou", "intraclotfact", "intraopprocomcon", "imedeaca", "imedtran", "bldprod", "bdrbcu", "bdffpu", "bdcryou", "bdplatu", "transfalg", "lwsttemp", "xclamptm", "circarr", "totcircarrtm",  "cabg", "valve", "aorta", "other")
+
+contiVarIndex <- which(reordered_tableVars %in% contiVars)
+
+df_male <- df_male[, reordered_tableVars]
+df_fem <- df_fem[, reordered_tableVars]
+
+renameVars <- c("Age", "hgb_tert", "Race", "Height(cm)", "Weight(kg)", "Diabetes", "Dyslipidemia", "Hypertension", "Chronic Lung Disease", "Endocarditis", "Peripheral Vascular Disease", "Thoracic Aortic Disease", "Cerebralvascular Disease", "NYHA Classification", "Left Ventricular Ejection Fraction", "Preoperative Creatinine", "eGFR", "Kidney Function", "Aortic Valve Insufficiency", "Aortic Stenosis", "Emergency Status", "Preoperative Hemoglobin", "Preoperative Hematocrit", "Preoperative Platelet", "Preoperative Total Albumin", "First Postop Hemoglobin", "Lowest Postoperative Hemoglobin", "Hemoglobin at Discharge", "Hematocrit at Discharge","Intraop Blood Products", "Intraop RBC Units", "Intraop FFP Units", "Intraop Platelet Units", "Intraop Cryo Units", "Intraop Clotting Factors", "Intraop Prothrombin Complex Concentrate", "Intraop Epsilon Amino-Caproic Acid", "Intraop Tranexamic Acid", "Postoperative Blood Prod", "Postoperative RBC Units", "Postoperative FFP Units", "Postoperative Cryo Units", "Postoperative Platelet Units", "Transfusion Algorithm", "Lowest Temperature", "Cross Clamp Time (min)", "Circulatory Arrest", "Total Circulatory Arrest Time", "CABG", "Valve Surgery", "Aorta Surgery", "Other Surgery")
+
+renameContinuvars <- renameVars[contiVarIndex]
+renameCatvars <- renameVars[!renameVars %in% c(renameContinuvars, "gender")]
+
+setnames(df_male, old = reordered_tableVars, new = renameVars)
+setnames(df_fem, old = reordered_tableVars, new = renameVars)
+
+tab_male <- CreateTableOne(renameVars[!renameVars %in% "hgb_tert"], strata = "hgb_tert", data = df_male, factorVars = renameCatvars)
+print(tab_male, smd = T, test = F, pDigits = 2, catDigits = 1, contDigits = 1)
+
+tab_fem <- CreateTableOne(renameVars[!renameVars %in% "hgb_tert"], strata = "hgb_tert", data = df_fem, factorVars = renameCatvars)
+print(tab_fem, smd = T, test = F, pDigits = 2, catDigits = 1, contDigits = 1)
+```
+
+
+
+
+
+
